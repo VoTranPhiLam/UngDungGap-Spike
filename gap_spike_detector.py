@@ -2562,28 +2562,29 @@ class GapSpikeDetectorGUI:
                     "Reset Python Connection",
                     "🔄 Reset Python Connection?\n\n"
                     "Hành động này sẽ:\n"
-                    "• Xóa tất cả dữ liệu hiện tại\n"
+                    "• Xóa dữ liệu kết nối & Gap/Spike hiện tại\n"
                     "• Clear connection cache\n"
                     "• Chờ EAs gửi dữ liệu mới\n\n"
+                    "✅ Dữ liệu Chart sẽ được GIỮ NGUYÊN\n"
                     "⚠️ Các sàn sẽ tự động kết nối lại khi EA gửi data\n\n"
                     "Continue?"
                 )
-                
+
                 if not confirm:
                     return False
-            
+
             reset_executed = True
             if skip_confirmation:
-                self.log("🔄 Auto reset Python connection...")
+                self.log("🔄 Auto reset Python connection (giữ chart data)...")
             else:
-                self.log("🔄 Đang reset Python connection...")
-            
+                self.log("🔄 Đang reset Python connection (giữ chart data)...")
+
             with data_lock:
                 market_data.clear()
                 gap_spike_results.clear()
                 alert_board.clear()
                 bid_tracking.clear()
-                candle_data.clear()
+                # candle_data.clear()  # ← KHÔNG xóa để giữ lại chart data
             
             self.tree.delete(*self.tree.get_children())
             self.alert_tree.delete(*self.alert_tree.get_children())
@@ -2595,17 +2596,19 @@ class GapSpikeDetectorGUI:
                     "Reset Successful",
                     "✅ Python connection đã được reset!\n\n"
                     "📡 Server đang chờ dữ liệu từ EAs\n"
-                    "🔌 Các sàn sẽ tự động kết nối lại\n\n"
+                    "🔌 Các sàn sẽ tự động kết nối lại\n"
+                    "📊 Chart data đã được GIỮ NGUYÊN\n\n"
                     "Không cần restart EAs, chỉ cần chờ data được gửi."
                 )
             
             if skip_confirmation:
-                self.log("✅ Auto reset Python connection.")
+                self.log("✅ Auto reset Python connection (chart data được giữ).")
             else:
-                self.log("✅ Reset thành công!")
+                self.log("✅ Reset thành công (chart data được giữ)!")
             self.log("⏳ Đang chờ EAs gửi dữ liệu mới...")
             self.log("📡 Flask server vẫn đang chạy trên port 80")
             self.log("🔌 Các sàn sẽ tự động kết nối khi EA gửi data")
+            self.log("📊 Dữ liệu Chart vẫn được giữ nguyên")
             
             logger.info(f"Python connection reset ({reason})")
             return True
