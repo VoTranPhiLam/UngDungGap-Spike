@@ -1945,24 +1945,24 @@ class GapSpikeDetectorGUI:
         control_frame.pack(fill=tk.X)
         
         ttk.Label(control_frame, text="Gap & Spike Detector", font=('Arial', 16, 'bold')).pack(side=tk.LEFT, padx=10)
-        
+
         # Filters
         ttk.Checkbutton(control_frame, text="Chỉ hiển thị GAP", variable=self.filter_gap_only).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(control_frame, text="Chỉ hiển thị SPIKE", variable=self.filter_spike_only).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(control_frame, text="Auto Scroll", variable=self.auto_scroll).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(control_frame, text="Tự động cuộn", variable=self.auto_scroll).pack(side=tk.LEFT, padx=5)
         
         # Delay threshold config (moved to Settings, keep here for quick view/adjust)
         ttk.Label(control_frame, text="Delay (s):").pack(side=tk.LEFT, padx=(20, 5))
         delay_spinbox = ttk.Spinbox(control_frame, from_=30, to=600, textvariable=self.delay_threshold, width=8)
         delay_spinbox.pack(side=tk.LEFT, padx=5)
-        ttk.Label(control_frame, text="(⚙️ Settings for more)", foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=2)
-        
-        ttk.Button(control_frame, text="Settings", command=self.open_settings).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="📸 Pictures", command=self.open_picture_gallery).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="Connected", command=self.open_connected_brokers).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="🔄 Reset Python", command=self.reset_python_connection, 
+        ttk.Label(control_frame, text="(⚙️ Cài đặt để xem thêm)", foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(control_frame, text="Cài đặt", command=self.open_settings).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="📸 Hình ảnh", command=self.open_picture_gallery).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="Kết nối", command=self.open_connected_brokers).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="🔄 Khởi động lại Python", command=self.reset_python_connection,
                   style='Accent.TButton').pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="Clear Alerts", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="Xóa cảnh báo", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
         
         # Connection Status Warning Frame
         self.connection_warning_frame = ttk.Frame(self.root)
@@ -1989,9 +1989,9 @@ class GapSpikeDetectorGUI:
         self.delay_tree.heading('Broker', text='Broker')
         self.delay_tree.heading('Symbol', text='Symbol')
         self.delay_tree.heading('Bid', text='Bid Price')
-        self.delay_tree.heading('Last Change', text='Last Change')
-        self.delay_tree.heading('Delay Time', text='Delay Time')
-        self.delay_tree.heading('Status', text='Status')
+        self.delay_tree.heading('Last Change', text='Thay đổi lần cuối')
+        self.delay_tree.heading('Delay Time', text='Thời gian Delay')
+        self.delay_tree.heading('Status', text='Trạng thái')
         
         self.delay_tree.column('Broker', width=150)
         self.delay_tree.column('Symbol', width=100)
@@ -2013,7 +2013,7 @@ class GapSpikeDetectorGUI:
         self.delay_tree.bind('<Button-3>', self.show_delay_context_menu)
         
         # Stats Frame
-        stats_frame = ttk.LabelFrame(self.root, text="Statistics", padding="10")
+        stats_frame = ttk.LabelFrame(self.root, text="Thống kê", padding="10")
         stats_frame.pack(fill=tk.X, padx=10, pady=5)
         
         self.stats_label = ttk.Label(stats_frame, text="Đang chờ dữ liệu...", font=('Arial', 10))
@@ -2062,9 +2062,9 @@ class GapSpikeDetectorGUI:
         self.alert_tree.heading('Price', text='Price')
         self.alert_tree.heading('Gap %', text='Gap %')
         self.alert_tree.heading('Spike %', text='Spike %')
-        self.alert_tree.heading('Alert Type', text='Alert Type')
-        self.alert_tree.heading('Time', text='Time')
-        self.alert_tree.heading('Grace', text='Grace Period')
+        self.alert_tree.heading('Alert Type', text='Loại cảnh báo')
+        self.alert_tree.heading('Time', text='Thời gian')
+        self.alert_tree.heading('Grace', text='Thời gian chờ')
         
         self.alert_tree.column('Broker', width=120)
         self.alert_tree.column('Symbol', width=100)
@@ -2092,7 +2092,7 @@ class GapSpikeDetectorGUI:
         self.alert_tree.bind('<Double-Button-1>', self.on_alert_double_click)
         
         # Main Table Frame
-        table_frame = ttk.LabelFrame(self.root, text="Gap & Spike Detection Results", padding="10")
+        table_frame = ttk.LabelFrame(self.root, text="Kết quả phát hiện Gap & Spike", padding="10")
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         # Search/Filter Frame
@@ -2116,13 +2116,13 @@ class GapSpikeDetectorGUI:
 
         self.filter_symbols_by_search()
         # Column headings
-        self.tree.heading('Time', text='Time')
+        self.tree.heading('Time', text='Thời gian')
         self.tree.heading('Broker', text='Broker')
         self.tree.heading('Symbol', text='Symbol')
         self.tree.heading('Price', text='Price')
-        self.tree.heading('Gap Threshold', text='Gap Threshold (%)')
-        self.tree.heading('Spike Threshold', text='Spike Threshold (%)')
-        self.tree.heading('Status', text='Status')
+        self.tree.heading('Gap Threshold', text='Ngưỡng Gap (%)')
+        self.tree.heading('Spike Threshold', text='Ngưỡng Spike (%)')
+        self.tree.heading('Status', text='Trạng thái')
         
         # Column widths
         self.tree.column('Time', width=70)
@@ -2158,7 +2158,7 @@ class GapSpikeDetectorGUI:
         self.last_search_term = ""
         
         # Log Frame
-        log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding="10")
+        log_frame = ttk.LabelFrame(self.root, text="Nhật ký hoạt động", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=False, padx=10, pady=5)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD)
@@ -3274,18 +3274,18 @@ class SettingsWindow:
     def create_audio_settings_tab(self):
         """Create Audio Alerts Settings tab"""
         audio_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(audio_frame, text="🔊 Audio Alerts")
+        self.notebook.add(audio_frame, text="🔊 Cảnh báo âm thanh")
         
         # Title
-        ttk.Label(audio_frame, text="🔊 Audio Alert Configuration", 
+        ttk.Label(audio_frame, text="🔊 Cấu hình cảnh báo âm thanh",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=10)
-        
+
         # Enable/Disable audio alerts
-        enable_frame = ttk.LabelFrame(audio_frame, text="Enable Audio Alerts", padding="10")
+        enable_frame = ttk.LabelFrame(audio_frame, text="Bật cảnh báo âm thanh", padding="10")
         enable_frame.pack(fill=tk.X, pady=10)
-        
+
         self.audio_enabled_var = tk.BooleanVar(value=audio_settings.get('enabled', True))
-        ttk.Checkbutton(enable_frame, text="✅ Enable audio alerts for Gap/Spike/Delay detection",
+        ttk.Checkbutton(enable_frame, text="✅ Bật cảnh báo âm thanh cho phát hiện Gap/Spike/Delay",
                        variable=self.audio_enabled_var).pack(anchor=tk.W, pady=5)
         
         # Info text
@@ -3301,67 +3301,67 @@ class SettingsWindow:
                  font=('Arial', 9)).pack(anchor=tk.W, pady=10)
         
         # Audio file selection
-        files_frame = ttk.LabelFrame(audio_frame, text="📁 Audio Files", padding="10")
+        files_frame = ttk.LabelFrame(audio_frame, text="📁 Tệp âm thanh", padding="10")
         files_frame.pack(fill=tk.X, pady=10)
-        
+
         # Gap sound
         gap_frame = ttk.Frame(files_frame)
         gap_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(gap_frame, text="Gap Alert Sound:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(gap_frame, text="Âm thanh cảnh báo Gap:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
         self.gap_sound_var = tk.StringVar(value=audio_settings.get('gap_sound', 'sounds/Gap.mp3'))
         ttk.Entry(gap_frame, textvariable=self.gap_sound_var, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Button(gap_frame, text="📂 Browse", 
+        ttk.Button(gap_frame, text="📂 Chọn",
                   command=lambda: self.browse_audio_file(self.gap_sound_var, 'Gap')).pack(side=tk.LEFT, padx=2)
-        ttk.Button(gap_frame, text="🔊 Test", 
+        ttk.Button(gap_frame, text="🔊 Thử",
                   command=lambda: self.test_audio_file(self.gap_sound_var.get())).pack(side=tk.LEFT, padx=2)
-        
+
         # Spike sound
         spike_frame = ttk.Frame(files_frame)
         spike_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(spike_frame, text="Spike Alert Sound:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(spike_frame, text="Âm thanh cảnh báo Spike:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
         self.spike_sound_var = tk.StringVar(value=audio_settings.get('spike_sound', 'sounds/Spike.mp3'))
         ttk.Entry(spike_frame, textvariable=self.spike_sound_var, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Button(spike_frame, text="📂 Browse", 
+        ttk.Button(spike_frame, text="📂 Chọn",
                   command=lambda: self.browse_audio_file(self.spike_sound_var, 'Spike')).pack(side=tk.LEFT, padx=2)
-        ttk.Button(spike_frame, text="🔊 Test", 
+        ttk.Button(spike_frame, text="🔊 Thử",
                   command=lambda: self.test_audio_file(self.spike_sound_var.get())).pack(side=tk.LEFT, padx=2)
-        
+
         # Delay sound
         delay_frame = ttk.Frame(files_frame)
         delay_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(delay_frame, text="Delay Alert Sound:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(delay_frame, text="Âm thanh cảnh báo Delay:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
         self.delay_sound_var = tk.StringVar(value=audio_settings.get('delay_sound', 'sounds/Delay.mp3'))
         ttk.Entry(delay_frame, textvariable=self.delay_sound_var, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Button(delay_frame, text="📂 Browse", 
+        ttk.Button(delay_frame, text="📂 Chọn",
                   command=lambda: self.browse_audio_file(self.delay_sound_var, 'Delay')).pack(side=tk.LEFT, padx=2)
-        ttk.Button(delay_frame, text="🔊 Test", 
+        ttk.Button(delay_frame, text="🔊 Thử",
                   command=lambda: self.test_audio_file(self.delay_sound_var.get())).pack(side=tk.LEFT, padx=2)
         
         # Cooldown settings
-        cooldown_frame = ttk.LabelFrame(audio_frame, text="⏱️ Replay Cooldown", padding="10")
+        cooldown_frame = ttk.LabelFrame(audio_frame, text="⏱️ Thời gian chờ phát lại", padding="10")
         cooldown_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(cooldown_frame, text="Minimum time before replaying same alert (seconds):", 
+
+        ttk.Label(cooldown_frame, text="Thời gian tối thiểu trước khi phát lại cùng cảnh báo (giây):",
                  font=('Arial', 9)).pack(side=tk.LEFT, padx=5)
         ttk.Label(cooldown_frame, text="30", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
-        ttk.Label(cooldown_frame, text="(Fixed - không thể thay đổi)", foreground='gray',
+        ttk.Label(cooldown_frame, text="(Cố định - không thể thay đổi)", foreground='gray',
                  font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
-        
+
         # Separator
         ttk.Separator(audio_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-        
+
         # Quick actions
         action_frame = ttk.Frame(audio_frame)
         action_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Button(action_frame, text="💾 Save Audio Settings", 
+
+        ttk.Button(action_frame, text="💾 Lưu cài đặt âm thanh",
                   command=self.save_audio_settings_ui).pack(side=tk.LEFT, padx=5)
-        ttk.Button(action_frame, text="🔄 Reset to Defaults", 
+        ttk.Button(action_frame, text="🔄 Đặt lại mặc định",
                   command=self.reset_audio_defaults).pack(side=tk.LEFT, padx=5)
-        ttk.Button(action_frame, text="🔊 Test All Sounds", 
+        ttk.Button(action_frame, text="🔊 Thử tất cả âm thanh",
                   command=self.test_all_sounds).pack(side=tk.LEFT, padx=5)
     
     def browse_audio_file(self, var, alert_type):
@@ -3476,7 +3476,7 @@ class SettingsWindow:
     def __init__(self, parent, main_app):
         self.main_app = main_app
         self.window = tk.Toplevel(parent)
-        self.window.title("⚙️ Settings - Gap, Spike & Delay")
+        self.window.title("⚙️ Cài đặt - Gap, Spike & Delay")
         self.window.geometry("800x600")
         
         # Make window modal - chặn thao tác cửa sổ parent
@@ -3517,61 +3517,61 @@ class SettingsWindow:
     def create_delay_settings_tab(self):
         """Create Delay Settings tab"""
         delay_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(delay_frame, text="⏱️ Delay Settings")
-        
+        self.notebook.add(delay_frame, text="⏱️ Cài đặt Delay")
+
         # Title
-        ttk.Label(delay_frame, text="Delay Detection Settings", 
+        ttk.Label(delay_frame, text="Cài đặt phát hiện Delay",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=5)
-        
+
         # Delay Threshold
-        threshold_frame = ttk.LabelFrame(delay_frame, text="Delay Threshold", padding="10")
+        threshold_frame = ttk.LabelFrame(delay_frame, text="Ngưỡng Delay", padding="10")
         threshold_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(threshold_frame, text="Delay threshold (seconds):").pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(threshold_frame, text="Ngưỡng delay (giây):").pack(side=tk.LEFT, padx=5)
         self.delay_threshold_var = tk.IntVar(value=delay_settings['threshold'])
-        ttk.Spinbox(threshold_frame, from_=30, to=600, textvariable=self.delay_threshold_var, 
+        ttk.Spinbox(threshold_frame, from_=30, to=600, textvariable=self.delay_threshold_var,
                    width=10).pack(side=tk.LEFT, padx=5)
         ttk.Label(threshold_frame, text="(30-600s)", foreground='gray').pack(side=tk.LEFT, padx=5)
-        
+
         # Info
-        info_text = "Symbols không update giá trên threshold sẽ hiển thị trong Delay board"
+        info_text = "Symbols không update giá trên ngưỡng sẽ hiển thị trong bảng Delay"
         ttk.Label(threshold_frame, text=info_text, foreground='blue').pack(side=tk.LEFT, padx=20)
-        
+
         # Auto Hide Time
-        auto_hide_frame = ttk.LabelFrame(delay_frame, text="Auto Hide Time", padding="10")
+        auto_hide_frame = ttk.LabelFrame(delay_frame, text="Thời gian tự động ẩn", padding="10")
         auto_hide_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(auto_hide_frame, text="Auto hide after (seconds):").pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(auto_hide_frame, text="Tự động ẩn sau (giây):").pack(side=tk.LEFT, padx=5)
         self.auto_hide_time_var = tk.IntVar(value=delay_settings.get('auto_hide_time', 3600))
-        ttk.Spinbox(auto_hide_frame, from_=600, to=7200, textvariable=self.auto_hide_time_var, 
+        ttk.Spinbox(auto_hide_frame, from_=600, to=7200, textvariable=self.auto_hide_time_var,
                    width=10, increment=300).pack(side=tk.LEFT, padx=5)
-        ttk.Label(auto_hide_frame, text="(10-120 min)", foreground='gray').pack(side=tk.LEFT, padx=5)
-        
+        ttk.Label(auto_hide_frame, text="(10-120 phút)", foreground='gray').pack(side=tk.LEFT, padx=5)
+
         # Info
-        info_text2 = "Symbols delay quá lâu sẽ tự động ẩn khỏi Delay board"
+        info_text2 = "Symbols delay quá lâu sẽ tự động ẩn khỏi bảng Delay"
         ttk.Label(auto_hide_frame, text=info_text2, foreground='blue').pack(side=tk.LEFT, padx=20)
-        
+
         # Save button
-        ttk.Button(delay_frame, text="💾 Save Delay Settings", 
+        ttk.Button(delay_frame, text="💾 Lưu cài đặt Delay",
                   command=self.save_delay_settings).pack(pady=20)
     
     def create_gap_spike_settings_tab(self):
         """Create Gap/Spike Settings tab with visual editor"""
         gs_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(gs_frame, text="📊 Gap/Spike Settings")
-        
+        self.notebook.add(gs_frame, text="📊 Cài đặt Gap/Spike")
+
         # Top controls
         top_frame = ttk.Frame(gs_frame)
         top_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(top_frame, text="📊 Gap/Spike Thresholds Configuration", 
+
+        ttk.Label(top_frame, text="📊 Cấu hình ngưỡng Gap/Spike",
                  font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(top_frame, text="🔄 Refresh Symbols", 
+
+        ttk.Button(top_frame, text="🔄 Làm mới Symbols",
                   command=self.refresh_gap_spike_list).pack(side=tk.RIGHT, padx=5)
-        
+
         # Instructions
-        inst_frame = ttk.LabelFrame(gs_frame, text="💡 Instructions", padding="5")
+        inst_frame = ttk.LabelFrame(gs_frame, text="💡 Hướng dẫn", padding="5")
         inst_frame.pack(fill=tk.X, pady=5)
         
         instructions = """• Double-click cell để edit Gap/Spike threshold
@@ -3584,19 +3584,19 @@ class SettingsWindow:
                  font=('Arial', 9)).pack(anchor=tk.W)
         
         # Quick actions
-        action_frame = ttk.LabelFrame(gs_frame, text="⚡ Quick Actions - Bulk Configuration", padding="10")
+        action_frame = ttk.LabelFrame(gs_frame, text="⚡ Thao tác nhanh - Cấu hình hàng loạt", padding="10")
         action_frame.pack(fill=tk.X, pady=5)
-        
+
         # Threshold inputs
         threshold_row = ttk.Frame(action_frame)
         threshold_row.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(threshold_row, text="Gap Threshold:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(threshold_row, text="Ngưỡng Gap:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
         self.quick_gap_var = tk.StringVar(value="0.01")
         ttk.Entry(threshold_row, textvariable=self.quick_gap_var, width=10).pack(side=tk.LEFT, padx=2)
         ttk.Label(threshold_row, text="%", foreground='blue').pack(side=tk.LEFT, padx=2)
-        
-        ttk.Label(threshold_row, text="  Spike Threshold:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(20, 5))
+
+        ttk.Label(threshold_row, text="  Ngưỡng Spike:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(20, 5))
         self.quick_spike_var = tk.StringVar(value="0.02")
         ttk.Entry(threshold_row, textvariable=self.quick_spike_var, width=10).pack(side=tk.LEFT, padx=2)
         ttk.Label(threshold_row, text="%", foreground='blue').pack(side=tk.LEFT, padx=2)
@@ -3607,57 +3607,57 @@ class SettingsWindow:
         # Option 1: Apply to ALL brokers
         option1_row = ttk.Frame(action_frame)
         option1_row.pack(fill=tk.X, pady=3)
-        
-        ttk.Label(option1_row, text="🌐 Option 1:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
-        ttk.Button(option1_row, text="Apply to ALL Symbols from ALL Brokers", 
+
+        ttk.Label(option1_row, text="🌐 Tùy chọn 1:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        ttk.Button(option1_row, text="Áp dụng cho TẤT CẢ Symbols từ TẤT CẢ Brokers",
                   command=self.apply_to_all, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Label(option1_row, text="(Tất cả sản phẩm tất cả sàn)", 
+        ttk.Label(option1_row, text="(Tất cả sản phẩm tất cả sàn)",
                  foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
-        
+
         # Option 2: Apply to ONE broker
         option2_row = ttk.Frame(action_frame)
         option2_row.pack(fill=tk.X, pady=3)
-        
-        ttk.Label(option2_row, text="🏢 Option 2:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
-        ttk.Label(option2_row, text="Select Broker:").pack(side=tk.LEFT, padx=5)
-        
+
+        ttk.Label(option2_row, text="🏢 Tùy chọn 2:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        ttk.Label(option2_row, text="Chọn Broker:").pack(side=tk.LEFT, padx=5)
+
         self.broker_selector_var = tk.StringVar()
-        self.broker_selector = ttk.Combobox(option2_row, textvariable=self.broker_selector_var, 
+        self.broker_selector = ttk.Combobox(option2_row, textvariable=self.broker_selector_var,
                                             width=15, state='readonly')
         self.broker_selector.pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(option2_row, text="Apply to ALL Symbols from This Broker", 
+
+        ttk.Button(option2_row, text="Áp dụng cho TẤT CẢ Symbols từ Broker này",
                   command=self.apply_to_selected_broker_from_dropdown, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Label(option2_row, text="(Tất cả sản phẩm của sàn này)", 
+        ttk.Label(option2_row, text="(Tất cả sản phẩm của sàn này)",
                  foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
         
         # Filter by broker
         filter_frame = ttk.Frame(gs_frame)
         filter_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(filter_frame, text="🔍 Filter by Broker:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(filter_frame, text="🔍 Lọc theo Broker:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
         self.broker_filter_var = tk.StringVar(value="All Brokers")
-        self.broker_filter = ttk.Combobox(filter_frame, textvariable=self.broker_filter_var, 
+        self.broker_filter = ttk.Combobox(filter_frame, textvariable=self.broker_filter_var,
                                           width=20, state='readonly')
         self.broker_filter.pack(side=tk.LEFT, padx=5)
         self.broker_filter.bind('<<ComboboxSelected>>', lambda e: self.filter_symbols_by_broker())
-        
-        ttk.Label(filter_frame, text="(Lọc hiển thị symbols theo sàn)", 
+
+        ttk.Label(filter_frame, text="(Lọc hiển thị symbols theo sàn)",
                  foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
-        
+
         # Treeview for symbols
-        tree_frame = ttk.LabelFrame(gs_frame, text="📋 Symbols from Market Watch", padding="5")
+        tree_frame = ttk.LabelFrame(gs_frame, text="📋 Symbols từ Market Watch", padding="5")
         tree_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        
+
         # Create treeview
         columns = ('Broker', 'Symbol', 'Gap %', 'Spike %', 'Status')
         self.gs_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=15)
-        
+
         self.gs_tree.heading('Broker', text='Broker')
         self.gs_tree.heading('Symbol', text='Symbol')
-        self.gs_tree.heading('Gap %', text='Gap Threshold (%)')
-        self.gs_tree.heading('Spike %', text='Spike Threshold (%)')
-        self.gs_tree.heading('Status', text='Source')
+        self.gs_tree.heading('Gap %', text='Ngưỡng Gap (%)')
+        self.gs_tree.heading('Spike %', text='Ngưỡng Spike (%)')
+        self.gs_tree.heading('Status', text='Nguồn')
         
         self.gs_tree.column('Broker', width=120)
         self.gs_tree.column('Symbol', width=100)
@@ -3697,11 +3697,11 @@ class SettingsWindow:
     def create_symbol_filter_tab(self):
         """Create Symbol Filter tab to choose which symbols are processed"""
         symbol_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(symbol_frame, text="🎯 Symbol Filter")
+        self.notebook.add(symbol_frame, text="🎯 Lọc Symbol")
 
         ttk.Label(
             symbol_frame,
-            text="Symbol Filter for Gap/Spike Detection",
+            text="Lọc Symbol để phát hiện Gap/Spike",
             font=('Arial', 12, 'bold')
         ).pack(anchor=tk.W, pady=(0, 5))
 
@@ -3756,25 +3756,25 @@ class SettingsWindow:
 
         ttk.Button(
             control_frame,
-            text="Select All (Visible)",
+            text="Chọn tất cả (Hiển thị)",
             command=self.select_all_visible_symbols
         ).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(
             control_frame,
-            text="Clear Visible",
+            text="Xóa bỏ hiển thị",
             command=self.clear_visible_symbols
         ).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(
             control_frame,
-            text="💾 Save",
+            text="💾 Lưu",
             command=self.save_symbol_filter_settings_ui
         ).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(
             control_frame,
-            text="Refresh",
+            text="Làm mới",
             command=self.refresh_symbol_filter_tree
         ).pack(side=tk.RIGHT, padx=5)
 
@@ -3822,7 +3822,7 @@ class SettingsWindow:
 
         ttk.Button(
             bottom_frame,
-            text="💾 Save Symbol Filter",
+            text="💾 Lưu lọc Symbol",
             command=self.save_symbol_filter_settings_ui
         ).pack(side=tk.LEFT, padx=5)
 
@@ -4058,42 +4058,42 @@ class SettingsWindow:
     def create_screenshot_settings_tab(self):
         """Create Screenshot Settings tab"""
         screenshot_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(screenshot_frame, text="📸 Screenshot")
-        
+        self.notebook.add(screenshot_frame, text="📸 Chụp màn hình")
+
         # Title
-        ttk.Label(screenshot_frame, text="📸 Auto Screenshot Settings", 
+        ttk.Label(screenshot_frame, text="📸 Cài đặt tự động chụp màn hình",
                  font=('Arial', 12, 'bold')).pack(pady=10)
-        
+
         # Enable/Disable
-        enable_frame = ttk.LabelFrame(screenshot_frame, text="Enable Auto Screenshot", padding="10")
+        enable_frame = ttk.LabelFrame(screenshot_frame, text="Bật tự động chụp màn hình", padding="10")
         enable_frame.pack(fill=tk.X, pady=5)
-        
+
         self.screenshot_enabled_var = tk.BooleanVar(value=screenshot_settings['enabled'])
-        ttk.Checkbutton(enable_frame, text="✅ Auto capture screenshots when Gap/Spike detected",
+        ttk.Checkbutton(enable_frame, text="✅ Tự động chụp màn hình khi phát hiện Gap/Spike",
                        variable=self.screenshot_enabled_var).pack(anchor=tk.W, pady=5)
-        
+
         # Type selection
-        type_frame = ttk.LabelFrame(screenshot_frame, text="Screenshot Types", padding="10")
+        type_frame = ttk.LabelFrame(screenshot_frame, text="Loại chụp màn hình", padding="10")
         type_frame.pack(fill=tk.X, pady=5)
-        
+
         self.screenshot_gap_var = tk.BooleanVar(value=screenshot_settings['save_gap'])
-        ttk.Checkbutton(type_frame, text="📸 Capture on Gap detection",
+        ttk.Checkbutton(type_frame, text="📸 Chụp khi phát hiện Gap",
                        variable=self.screenshot_gap_var).pack(anchor=tk.W, pady=2)
-        
+
         self.screenshot_spike_var = tk.BooleanVar(value=screenshot_settings['save_spike'])
-        ttk.Checkbutton(type_frame, text="📸 Capture on Spike detection",
+        ttk.Checkbutton(type_frame, text="📸 Chụp khi phát hiện Spike",
                        variable=self.screenshot_spike_var).pack(anchor=tk.W, pady=2)
-        
+
         # Folder settings
-        folder_frame = ttk.LabelFrame(screenshot_frame, text="Storage", padding="10")
+        folder_frame = ttk.LabelFrame(screenshot_frame, text="Lưu trữ", padding="10")
         folder_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(folder_frame, text="Folder:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Label(folder_frame, text="Thư mục:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.screenshot_folder_var = tk.StringVar(value=screenshot_settings['folder'])
         folder_entry = ttk.Entry(folder_frame, textvariable=self.screenshot_folder_var, width=30)
         folder_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
-        
-        ttk.Button(folder_frame, text="📂 Open Folder", 
+
+        ttk.Button(folder_frame, text="📂 Mở thư mục",
                   command=self.open_screenshots_folder).grid(row=0, column=2, padx=5, pady=5)
         
         # Info
@@ -4115,7 +4115,7 @@ class SettingsWindow:
                  font=('Arial', 9)).pack(padx=10)
         
         # Save button
-        ttk.Button(screenshot_frame, text="💾 Save Screenshot Settings",
+        ttk.Button(screenshot_frame, text="💾 Lưu cài đặt chụp màn hình",
                   command=self.save_screenshot_settings).pack(pady=20)
     
     def save_screenshot_settings(self):
@@ -4159,10 +4159,10 @@ class SettingsWindow:
     def create_hidden_list_tab(self):
         """Create Manual Hidden List tab"""
         hidden_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(hidden_frame, text="🔒 Hidden List")
-        
+        self.notebook.add(hidden_frame, text="🔒 Danh sách ẩn")
+
         # Title
-        ttk.Label(hidden_frame, text="Manually Hidden Symbols", 
+        ttk.Label(hidden_frame, text="Symbols đã ẩn thủ công",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=5)
         
         # Info
@@ -4194,11 +4194,11 @@ class SettingsWindow:
         btn_frame = ttk.Frame(hidden_frame)
         btn_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Button(btn_frame, text="🔓 Unhide Selected", 
+        ttk.Button(btn_frame, text="🔓 Bỏ ẩn đã chọn",
                   command=self.unhide_selected).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🗑️ Clear All", 
+        ttk.Button(btn_frame, text="🗑️ Xóa tất cả",
                   command=self.clear_all_hidden).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🔄 Refresh", 
+        ttk.Button(btn_frame, text="🔄 Làm mới",
                   command=self.refresh_hidden_list).pack(side=tk.LEFT, padx=5)
         
         # Initial load
@@ -4207,56 +4207,56 @@ class SettingsWindow:
     def create_tools_tab(self):
         """Create Tools tab for Trading Hours & Raw Data"""
         tools_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(tools_frame, text="🔧 Tools")
-        
+        self.notebook.add(tools_frame, text="🔧 Công cụ")
+
         # Title
-        ttk.Label(tools_frame, text="Additional Tools", 
+        ttk.Label(tools_frame, text="Công cụ bổ sung",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=10)
-        
+
         # Trading Hours section
-        trading_hours_section = ttk.LabelFrame(tools_frame, text="📅 Trading Hours", padding="20")
+        trading_hours_section = ttk.LabelFrame(tools_frame, text="📅 Giờ giao dịch", padding="20")
         trading_hours_section.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(trading_hours_section, 
+
+        ttk.Label(trading_hours_section,
                  text="Xem giờ trade của các symbols từ các sàn",
                  foreground='blue').pack(anchor=tk.W, pady=5)
-        
-        ttk.Button(trading_hours_section, text="📅 Open Trading Hours", 
+
+        ttk.Button(trading_hours_section, text="📅 Mở giờ giao dịch",
                   command=self.main_app.open_trading_hours,
                   width=30).pack(anchor=tk.W, pady=5)
-        
+
         # Raw Data section
-        raw_data_section = ttk.LabelFrame(tools_frame, text="📊 Raw Data Viewer", padding="20")
+        raw_data_section = ttk.LabelFrame(tools_frame, text="📊 Xem dữ liệu thô", padding="20")
         raw_data_section.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(raw_data_section, 
+
+        ttk.Label(raw_data_section,
                  text="Xem raw data từ MT4/MT5 (giá bid/ask, OHLC, v.v.)",
                  foreground='blue').pack(anchor=tk.W, pady=5)
-        
-        ttk.Button(raw_data_section, text="📊 Open Raw Data Viewer", 
+
+        ttk.Button(raw_data_section, text="📊 Mở xem dữ liệu thô",
                   command=self.main_app.open_raw_data_viewer,
                   width=30).pack(anchor=tk.W, pady=5)
         
         # Auto reset Python section
-        python_reset_section = ttk.LabelFrame(tools_frame, text="🔁 Auto Reset Python", padding="20")
+        python_reset_section = ttk.LabelFrame(tools_frame, text="🔁 Tự động khởi động lại Python", padding="20")
         python_reset_section.pack(fill=tk.X, pady=10)
-        
+
         ttk.Label(
             python_reset_section,
-            text="Tự động gọi Reset Python định kỳ để làm mới kết nối.",
+            text="Tự động gọi khởi động lại Python định kỳ để làm mới kết nối.",
             foreground='blue'
         ).pack(anchor=tk.W, pady=5)
-        
+
         self.python_reset_enabled_var = tk.BooleanVar(value=python_reset_settings.get('enabled', False))
         ttk.Checkbutton(
             python_reset_section,
-            text="Bật Auto Reset Python",
+            text="Bật tự động khởi động lại Python",
             variable=self.python_reset_enabled_var
         ).pack(anchor=tk.W, pady=2)
-        
+
         interval_frame = ttk.Frame(python_reset_section)
         interval_frame.pack(fill=tk.X, pady=5)
-        
+
         ttk.Label(interval_frame, text="Khoảng thời gian (phút):").pack(side=tk.LEFT, padx=5)
         self.python_reset_interval_var = tk.IntVar(value=python_reset_settings.get('interval_minutes', 30))
         ttk.Spinbox(
@@ -4272,20 +4272,20 @@ class SettingsWindow:
             foreground='gray',
             font=('Arial', 8)
         ).pack(side=tk.LEFT, padx=5)
-        
+
         ttk.Button(
             python_reset_section,
-            text="💾 Save Auto Reset Settings",
+            text="💾 Lưu cài đặt tự động khởi động lại",
             command=self.save_python_reset_settings_ui
         ).pack(anchor=tk.W, pady=10)
     
     def create_auto_send_tab(self):
         """Create Auto-Send Google Sheets Settings tab"""
         auto_send_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(auto_send_frame, text="📤 Auto-Send Sheets")
-        
+        self.notebook.add(auto_send_frame, text="📤 Tự động gửi Sheets")
+
         # Title
-        ttk.Label(auto_send_frame, text="Google Sheets Configuration for Picture Gallery", 
+        ttk.Label(auto_send_frame, text="Cấu hình Google Sheets cho Thư viện ảnh",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=5)
         
         # Info
@@ -4296,26 +4296,26 @@ class SettingsWindow:
         ttk.Label(auto_send_frame, text=info_text2, foreground='orange').pack(anchor=tk.W, pady=2)
         
         # Google Sheet URL
-        url_frame = ttk.LabelFrame(auto_send_frame, text="📊 Google Sheet Configuration", padding="10")
+        url_frame = ttk.LabelFrame(auto_send_frame, text="📊 Cấu hình Google Sheet", padding="10")
         url_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(url_frame, text="Sheet URL:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Label(url_frame, text="URL Sheet:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.sheet_url_var = tk.StringVar(value=auto_send_settings['sheet_url'])
         ttk.Entry(url_frame, textvariable=self.sheet_url_var, width=60).grid(row=0, column=1, padx=5, pady=5)
-        
-        ttk.Label(url_frame, text="Sheet Name (tab):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Label(url_frame, text="Tên Sheet (tab):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.sheet_name_var = tk.StringVar(value=auto_send_settings['sheet_name'])
         ttk.Entry(url_frame, textvariable=self.sheet_name_var, width=30).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
-        
-        ttk.Label(url_frame, text="Start Column:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Label(url_frame, text="Cột bắt đầu:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
         self.start_column_var = tk.StringVar(value=auto_send_settings['start_column'])
         ttk.Entry(url_frame, textvariable=self.start_column_var, width=5).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(url_frame, text="(VD: A, B, C, ...)", foreground='gray', font=('Arial', 8)).grid(row=2, column=1, padx=(50, 0), sticky=tk.W)
-        
+
         # Column mapping
-        columns_frame = ttk.LabelFrame(auto_send_frame, text="📋 Columns to Send", padding="10")
+        columns_frame = ttk.LabelFrame(auto_send_frame, text="📋 Cột cần gửi", padding="10")
         columns_frame.pack(fill=tk.X, pady=10)
-        
+
         ttk.Label(columns_frame, text="Chọn thông tin muốn gửi lên Sheet:", foreground='blue').pack(anchor=tk.W, pady=5)
         
         columns_config = auto_send_settings.get('columns', {})
@@ -4342,10 +4342,10 @@ class SettingsWindow:
         action_frame = ttk.Frame(auto_send_frame)
         action_frame.pack(fill=tk.X, pady=10)
 
-        ttk.Button(action_frame, text="🧪 Test Connection",
+        ttk.Button(action_frame, text="🧪 Kiểm tra kết nối",
                   command=self.test_google_sheet_connection).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(action_frame, text="💾 Save Auto-Send Settings",
+        ttk.Button(action_frame, text="💾 Lưu cài đặt tự động gửi",
                   command=self.save_auto_send_settings_ui).pack(side=tk.LEFT, padx=5)
 
     def save_auto_send_settings_ui(self):
