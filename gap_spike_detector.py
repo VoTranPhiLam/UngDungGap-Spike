@@ -1790,19 +1790,29 @@ def receive_data():
                     if candle_data[key]:
                         last_candle = candle_data[key][-1]
                         last_time = last_candle[0]
-                        
+
                         if last_time == candle_time:
                             # Cùng phút → Update nến hiện tại
                             # Update High/Low nếu cần
                             last_o, last_h, last_l, last_c = last_candle[1], last_candle[2], last_candle[3], last_candle[4]
                             new_h = max(last_h, h)
                             new_l = min(last_l, l)
-                            
+
                             # Update nến
                             candle_data[key][-1] = (candle_time, last_o, new_h, new_l, c)
                         else:
-                            # Phút mới → Thêm nến mới
-                            candle_data[key].append((candle_time, o, h, l, c))
+                            # Phút mới → CHỈ thêm nến mới nếu có thay đổi giá (giống MT4/MT5)
+                            # Lấy Close của nến cuối cùng
+                            last_c = last_candle[4]
+
+                            # Kiểm tra xem có thay đổi giá không
+                            # Nếu OHLC đều bằng Close của nến cuối → Delay (không có tick mới)
+                            has_price_change = not (o == last_c and h == last_c and l == last_c and c == last_c)
+
+                            if has_price_change:
+                                # Có thay đổi giá → Tạo nến mới
+                                candle_data[key].append((candle_time, o, h, l, c))
+                            # Nếu không có thay đổi → KHÔNG tạo nến mới (giống MT4/MT5 khi delay)
                     else:
                         # Nến đầu tiên (list trống)
                         candle_data[key].append((candle_time, o, h, l, c))
