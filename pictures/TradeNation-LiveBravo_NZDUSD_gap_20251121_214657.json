@@ -1,0 +1,22 @@
+{
+  "broker": "TradeNation-LiveBravo",
+  "symbol": "NZDUSD",
+  "detection_type": "gap",
+  "server_timestamp": 1763761617,
+  "server_time": "2025-11-21 21:46:57",
+  "gap": {
+    "detected": true,
+    "direction": "up",
+    "percentage": 0.32722396066160003,
+    "message": "GAP UP: 0.327% (Open: 0.56108, Close_prev: 0.55925, ngưỡng: 0.3% / spread: 0.057%)",
+    "threshold": 0.3
+  },
+  "spike": {
+    "detected": false,
+    "spike_type": "DOWN",
+    "strength": 0.32722396066160003,
+    "message": "Spike: Up 0.327% / Down 0.327%",
+    "threshold": 1.3
+  },
+  "created_at": "2025-11-22 04:46:57"
+}

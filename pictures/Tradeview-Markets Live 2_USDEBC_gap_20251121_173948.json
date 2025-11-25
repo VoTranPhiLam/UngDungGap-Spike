@@ -1,0 +1,22 @@
+{
+  "broker": "Tradeview-Markets Live 2",
+  "symbol": "USDEBC",
+  "detection_type": "gap",
+  "server_timestamp": 1763746788,
+  "server_time": "2025-11-21 17:39:48",
+  "gap": {
+    "detected": true,
+    "direction": "up",
+    "percentage": 0.6340088869621786,
+    "message": "GAP UP: 0.634% (Open: 3.71420, Close_prev: 3.69080, ngưỡng: 0.3% / spread: 0.024%)",
+    "threshold": 0.3
+  },
+  "spike": {
+    "detected": false,
+    "spike_type": "UP",
+    "strength": 0.6529749647772903,
+    "message": "Spike: Up 0.653% / Down 0.634%",
+    "threshold": 1.3
+  },
+  "created_at": "2025-11-21 22:39:48"
+}

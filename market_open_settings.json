@@ -1,0 +1,4 @@
+{
+  "only_check_open_market": true,
+  "skip_minutes_after_open": 5
+}

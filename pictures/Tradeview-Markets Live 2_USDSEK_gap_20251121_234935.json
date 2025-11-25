@@ -1,0 +1,22 @@
+{
+  "broker": "Tradeview-Markets Live 2",
+  "symbol": "USDSEK",
+  "detection_type": "gap",
+  "server_timestamp": 1763768975,
+  "server_time": "2025-11-21 23:49:35",
+  "gap": {
+    "detected": true,
+    "direction": "down",
+    "percentage": 0.4728583678093281,
+    "message": "GAP DOWN: 0.473% (Open: 9.54105, Ask: 9.55282 < Close_prev: 9.58638, ngưỡng: 0.3%)",
+    "threshold": 0.3
+  },
+  "spike": {
+    "detected": false,
+    "spike_type": "DOWN",
+    "strength": 0.4728583678093281,
+    "message": "Spike: Up 0.473% / Down 0.473%",
+    "threshold": 1.3
+  },
+  "created_at": "2025-11-22 04:49:36"
+}

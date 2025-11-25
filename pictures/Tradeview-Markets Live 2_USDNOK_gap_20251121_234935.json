@@ -1,0 +1,22 @@
+{
+  "broker": "Tradeview-Markets Live 2",
+  "symbol": "USDNOK",
+  "detection_type": "gap",
+  "server_timestamp": 1763768975,
+  "server_time": "2025-11-21 23:49:35",
+  "gap": {
+    "detected": true,
+    "direction": "down",
+    "percentage": 0.4177166315408577,
+    "message": "GAP DOWN: 0.418% (Open: 10.23914, Ask: 10.25526 < Close_prev: 10.28209, ngưỡng: 0.3%)",
+    "threshold": 0.3
+  },
+  "spike": {
+    "detected": false,
+    "spike_type": "DOWN",
+    "strength": 0.4177166315408577,
+    "message": "Spike: Up 0.418% / Down 0.418%",
+    "threshold": 1.3
+  },
+  "created_at": "2025-11-22 04:49:36"
+}

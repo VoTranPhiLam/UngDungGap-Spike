@@ -1,0 +1,10 @@
+# Requirements for building executable
+# Install these before building: pip install -r requirements_build.txt
+
+Flask==3.0.0
+Werkzeug==3.0.1
+matplotlib==3.9.0
+numpy>=2.0.0
+pyinstaller>=6.0.0
+pillow>=10.0.0
+
