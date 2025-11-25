@@ -29,6 +29,7 @@ from PIL import Image, ImageTk
 import glob
 import gspread
 from google.oauth2.service_account import Credentials
+from concurrent.futures import ThreadPoolExecutor
 
 # ===================== CONFIGURATION =====================
 HTTP_PORT = 80
@@ -138,6 +139,28 @@ CREDENTIALS_FILE = "credentials.json"  # Google service account credentials
 SHEET_ID_CACHE_FILE = "sheet_id_cache.json"  # Cache sheet ID to reuse (avoid creating duplicates)
 
 data_lock = threading.Lock()
+
+# ===================== THREAD POOL EXECUTORS =====================
+# Giới hạn số lượng threads đồng thời để tránh resource exhaustion
+audio_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix='audio')
+screenshot_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix='screenshot')
+# Data processing executor - xử lý symbols song song trong Flask endpoint
+data_processing_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='data_proc')
+
+# ===================== DATE CACHE =====================
+# Cache today's date để tránh gọi datetime.now() nhiều lần (system call overhead)
+_today_date_cache = {'date': None, 'timestamp': 0}
+
+def get_today_date():
+    """
+    Get today's date with caching (cache for 60 seconds)
+    Tránh gọi datetime.now().date() nhiều lần gây system call overhead
+    """
+    current_time = time.time()
+    if current_time - _today_date_cache['timestamp'] > 60:  # Cache 60 giây
+        _today_date_cache['date'] = datetime.now().date()
+        _today_date_cache['timestamp'] = current_time
+    return _today_date_cache['date']
 
 # ===================== MARKET OPEN HELPER =====================
 def is_within_skip_period_after_open(symbol, broker, current_timestamp):
@@ -398,10 +421,10 @@ def play_audio(audio_type, broker, symbol):
         
         # Mark as played
         audio_played_tracking[tracking_key] = current_time
-        
-        # Play audio in a separate thread to avoid blocking
-        threading.Thread(target=_play_audio_thread, args=(sound_file, audio_type, broker, symbol), daemon=True).start()
-        
+
+        # Submit to thread pool (max 5 concurrent audio playbacks)
+        audio_executor.submit(_play_audio_thread, sound_file, audio_type, broker, symbol)
+
         logger.info(f"Playing audio alert: {audio_type} for {broker}_{symbol} ({sound_file})")
         
     except Exception as e:
@@ -1197,13 +1220,12 @@ def update_alert_board(key, result):
                     if not screenshot_settings.get('save_spike', True):
                         return
                 
-                # Capture in separate thread to not block main thread
-                threading.Thread(
-                    target=capture_chart_screenshot,
-                    args=(broker, symbol, detection_type, gap_info, spike_info, server_timestamp),
-                    daemon=True
-                ).start()
-                
+                # Submit to screenshot thread pool (max 3 concurrent captures)
+                screenshot_executor.submit(
+                    capture_chart_screenshot,
+                    broker, symbol, detection_type, gap_info, spike_info, server_timestamp
+                )
+
                 # Mark as captured
                 alert_board[key]['screenshot_captured'] = True
                 logger.info(f"Screenshot queued for {key} ({detection_type})")
@@ -1422,7 +1444,7 @@ def calculate_gap(symbol, broker, data):
                 }
             
             # ✅ KIỂM TRA NGÀY: Nến gap phải cùng ngày với hôm nay
-            today_date = datetime.now().date()
+            today_date = get_today_date()  # Use cached date
             if current_date != today_date:
                 # Nến gap không phải hôm nay → Không phải gap mới
                 return {
@@ -1675,9 +1697,9 @@ def receive_data():
         symbols_data = data.get('data', [])
         
         with data_lock:
-            if broker not in market_data:
-                market_data[broker] = {}
-            
+            # Optimize: Use setdefault() instead of if-check (faster dict access)
+            broker_data = market_data.setdefault(broker, {})
+
             for symbol_data in symbols_data:
                 symbol = symbol_data.get('symbol', '')
                 if not symbol:
@@ -1685,7 +1707,7 @@ def receive_data():
                 
                 # Lưu dữ liệu market
                 current_bid = symbol_data.get('bid', 0)
-                market_data[broker][symbol] = {
+                broker_data[symbol] = {
                     'timestamp': timestamp,
                     'bid': current_bid,
                     'ask': symbol_data.get('ask', 0),
@@ -1709,20 +1731,20 @@ def receive_data():
 
                 # Track bid changes for delay detection
                 current_time = time.time()
-                
-                if key not in bid_tracking:
-                    # First time seeing this symbol
+
+                # Optimize: Check if symbol exists first
+                if key in bid_tracking:
+                    # Existing symbol - check if bid changed
+                    if bid_tracking[key]['last_bid'] != current_bid:
+                        bid_tracking[key]['last_bid'] = current_bid
+                        bid_tracking[key]['last_change_time'] = current_time
+                else:
+                    # First time seeing this symbol - initialize
                     bid_tracking[key] = {
                         'last_bid': current_bid,
                         'last_change_time': current_time,
                         'first_seen_time': current_time
                     }
-                else:
-                    # Check if bid changed
-                    if bid_tracking[key]['last_bid'] != current_bid:
-                        # Bid changed - update tracking
-                        bid_tracking[key]['last_bid'] = current_bid
-                        bid_tracking[key]['last_change_time'] = current_time
                 
                 # Store candle data for charting (M1 candles)
                 current_ohlc = symbol_data.get('current_ohlc', {})
@@ -1788,56 +1810,31 @@ def receive_data():
                     # Giữ tối đa 200 nến (để chart load nhanh)
                     if len(candle_data[key]) > 200:
                         candle_data[key] = candle_data[key][-200:]
-                    
-                    if key not in candle_data:
-                        candle_data[key] = []
-                    
-                    # Kiểm tra nến cuối cùng
-                    if candle_data[key]:
-                        last_candle = candle_data[key][-1]
-                        last_time = last_candle[0]
-                        
-                        if last_time == candle_time:
-                            # Cùng phút → Update nến hiện tại
-                            # Update High/Low nếu cần
-                            last_o, last_h, last_l, last_c = last_candle[1], last_candle[2], last_candle[3], last_candle[4]
-                            new_h = max(last_h, h)
-                            new_l = min(last_l, l)
-                            
-                            # Update nến
-                            candle_data[key][-1] = (candle_time, last_o, new_h, new_l, c)
-                        else:
-                            # Phút mới → Thêm nến mới
-                            candle_data[key].append((candle_time, o, h, l, c))
-                    else:
-                        # Nến đầu tiên
-                        candle_data[key].append((candle_time, o, h, l, c))
-                    
-                    # Giữ tối đa 200 nến (để chart load nhanh)
-                    if len(candle_data[key]) > 200:
-                        candle_data[key] = candle_data[key][-200:]
-                
+
                 # Tính toán Gap và Spike
                 # Kiểm tra nếu setting "only_check_open_market" được bật
                 should_calculate = True
                 skip_reason = ""
-                
+
+                # Optimize: Reuse broker_data[symbol] instead of market_data[broker][symbol]
+                symbol_market_data = broker_data[symbol]
+
                 if market_open_settings.get('only_check_open_market', False):
                     # Chỉ tính nếu market đang mở
-                    is_market_open = market_data[broker][symbol].get('isOpen', True)
+                    is_market_open = symbol_market_data.get('isOpen', True)
                     if not is_market_open:
                         should_calculate = False
                         skip_reason = "Market đóng cửa"
-                
+
                 # Kiểm tra skip period sau khi market mở
                 if should_calculate and is_within_skip_period_after_open(symbol, broker, timestamp):
                     should_calculate = False
                     skip_minutes = market_open_settings.get('skip_minutes_after_open', 0)
                     skip_reason = f"Bỏ {skip_minutes} phút đầu sau khi mở cửa"
-                
+
                 if should_calculate:
-                    gap_info = calculate_gap(symbol, broker, market_data[broker][symbol])
-                    spike_info = calculate_spike(symbol, broker, market_data[broker][symbol])
+                    gap_info = calculate_gap(symbol, broker, symbol_market_data)
+                    spike_info = calculate_spike(symbol, broker, symbol_market_data)
                 else:
                     # Không tính gap/spike (do market đóng hoặc skip period)
                     gap_info = {
@@ -1857,14 +1854,11 @@ def receive_data():
                     'symbol': symbol,
                     'broker': broker,
                     'timestamp': timestamp,
-                    'price': (market_data[broker][symbol]['bid'] + market_data[broker][symbol]['ask']) / 2,
+                    'price': (symbol_market_data['bid'] + symbol_market_data['ask']) / 2,
                     'gap': gap_info,
                     'spike': spike_info
                 }
-                
-                # Update Alert Board (Bảng Kèo)
-                update_alert_board(key, gap_spike_results[key])
-        
+
                 # Update Alert Board (Bảng Kèo)
                 update_alert_board(key, gap_spike_results[key])
                 
