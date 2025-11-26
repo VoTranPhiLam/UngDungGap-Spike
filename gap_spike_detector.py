@@ -1805,14 +1805,17 @@ def receive_data():
                             # Lấy Close của nến cuối cùng
                             last_c = last_candle[4]
 
-                            # Kiểm tra xem có thay đổi giá không
-                            # Nếu OHLC đều bằng Close của nến cuối → Delay (không có tick mới)
-                            has_price_change = not (o == last_c and h == last_c and l == last_c and c == last_c)
+                            # Kiểm tra xem có thay đổi giá THỰC SỰ không
+                            # CHỈ tạo nến mới nếu:
+                            # 1. Giá Close thay đổi so với nến cuối (có giao dịch mới)
+                            # 2. HOẶC có volatility trong nến (H != L - có biến động giá)
+                            # 3. HOẶC Open khác Close (có movement trong phút)
+                            has_price_change = (c != last_c) or (h != l) or (o != c)
 
                             if has_price_change:
                                 # Có thay đổi giá → Tạo nến mới
                                 candle_data[key].append((candle_time, o, h, l, c))
-                            # Nếu không có thay đổi → KHÔNG tạo nến mới (giống MT4/MT5 khi delay)
+                            # Nếu không có thay đổi (O=H=L=C và C=last_c) → KHÔNG tạo nến mới
                     else:
                         # Nến đầu tiên (list trống)
                         candle_data[key].append((candle_time, o, h, l, c))
@@ -3791,6 +3794,18 @@ class SettingsWindow:
             command=self.refresh_symbol_filter_tree
         ).pack(side=tk.RIGHT, padx=5)
 
+        # Search box
+        search_frame = ttk.Frame(symbol_frame)
+        search_frame.pack(fill=tk.X, pady=(5, 5))
+
+        ttk.Label(search_frame, text="🔍 Tìm kiếm:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.symbol_filter_search_var = tk.StringVar()
+        self.symbol_filter_search_var.trace('w', lambda *args: self.filter_symbol_filter_by_search())
+
+        search_entry = ttk.Entry(search_frame, textvariable=self.symbol_filter_search_var, width=25)
+        search_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Label(search_frame, text="(Nhập tên sản phẩm hoặc broker để lọc)", foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
+
         # Treeview
         tree_frame = ttk.LabelFrame(symbol_frame, text="Danh sách Symbols", padding="5")
         tree_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -3937,8 +3952,69 @@ class SettingsWindow:
             if self.symbol_filter_group_var.get() not in group_values:
                 self.symbol_filter_group_var.set("All Groups")
 
+            # Áp dụng search filter nếu có
+            if hasattr(self, 'symbol_filter_search_var') and self.symbol_filter_search_var.get().strip():
+                self.filter_symbol_filter_by_search()
+
         except Exception as e:
             logger.error(f"Error refreshing symbol filter tree: {e}")
+
+    def filter_symbol_filter_by_search(self):
+        """Tìm kiếm sản phẩm trong Symbol Filter với sắp xếp theo độ khớp"""
+        search_term = self.symbol_filter_search_var.get().strip().upper()
+
+        # Lấy tất cả items hiện tại trong tree
+        all_items = self.symbol_filter_tree.get_children()
+
+        if not search_term:
+            # Không có từ tìm → hiển thị tất cả
+            for item in all_items:
+                self.symbol_filter_tree.item(item, tags=self.symbol_filter_tree.item(item, 'tags'))
+            return
+
+        # Phân loại items theo độ khớp
+        exact_matches = []      # Khớp hoàn toàn
+        starts_matches = []     # Khớp từ đầu
+        contains_matches = []   # Chứa chuỗi
+        no_matches = []         # Không khớp
+
+        for item in all_items:
+            values = self.symbol_filter_tree.item(item, 'values')
+            if not values or len(values) < 3:
+                continue
+
+            # Lấy broker và symbol từ columns (index 1 và 2)
+            broker = str(values[1]).upper()
+            symbol = str(values[2]).upper()
+
+            # Kiểm tra độ khớp
+            if symbol == search_term or broker == search_term:
+                # Khớp hoàn toàn
+                exact_matches.append(item)
+            elif symbol.startswith(search_term) or broker.startswith(search_term):
+                # Khớp từ đầu
+                starts_matches.append(item)
+            elif search_term in symbol or search_term in broker:
+                # Chứa chuỗi
+                contains_matches.append(item)
+            else:
+                # Không khớp
+                no_matches.append(item)
+
+        # Sắp xếp và hiển thị
+        sorted_items = exact_matches + starts_matches + contains_matches
+
+        # Ẩn items không khớp
+        for item in no_matches:
+            self.symbol_filter_tree.detach(item)
+
+        # Hiển thị items khớp
+        for idx, item in enumerate(sorted_items):
+            self.symbol_filter_tree.reattach(item, '', idx)
+
+        # Auto scroll to first match
+        if sorted_items:
+            self.symbol_filter_tree.see(sorted_items[0])
 
     def toggle_symbol_filter_selection(self, event=None):
         """Toggle selection state when user double-clicks a row"""
