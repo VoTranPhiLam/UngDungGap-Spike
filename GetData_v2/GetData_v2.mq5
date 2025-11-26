@@ -24,8 +24,14 @@ Section_Trade_Ngay_Trong_Tuan glb_Section_Trade_Array[10];//CO 7 ngay tu : 0-6
 input int SendInterval = 1;                  // Send interval (seconds)
 input string glbStringFilePath = "web_url";  // File .txt chứa URL
 input bool SendOnlyOpenMarkets = false;      // Chỉ gửi sản phẩm đang mở (false = gửi tất cả)
+input int HistoricalCandles = 100;           // Số nến lịch sử gửi lần đầu (50-200)
 string WebServerURL = "";                    // URL sẽ được đọc từ file
 datetime lastSendTime = 0;
+
+// Track symbols đã gửi historical data (chỉ gửi 1 lần)
+bool historicalDataSent[];
+string historicalDataSymbols[];
+int historicalDataCount = 0;
 
 string EscapeJsonString(string value)
 {
@@ -54,6 +60,83 @@ string GetSymbolGroupPath(string symbol)
 #endif
 
    return group_path;
+}
+
+//============================================================
+// Helper functions for historical data tracking
+bool HasSentHistoricalData(string symbol)
+{
+   for(int i = 0; i < historicalDataCount; i++)
+   {
+      if(historicalDataSymbols[i] == symbol)
+         return historicalDataSent[i];
+   }
+   return false;
+}
+
+void MarkHistoricalDataSent(string symbol)
+{
+   // Tìm symbol trong list
+   for(int i = 0; i < historicalDataCount; i++)
+   {
+      if(historicalDataSymbols[i] == symbol)
+      {
+         historicalDataSent[i] = true;
+         return;
+      }
+   }
+
+   // Nếu chưa có, thêm mới
+   ArrayResize(historicalDataSymbols, historicalDataCount + 1);
+   ArrayResize(historicalDataSent, historicalDataCount + 1);
+   historicalDataSymbols[historicalDataCount] = symbol;
+   historicalDataSent[historicalDataCount] = true;
+   historicalDataCount++;
+}
+
+void ResetHistoricalDataTracking()
+{
+   // Reset tất cả tracking (sẽ gửi lại historical data cho tất cả symbols)
+   ArrayResize(historicalDataSymbols, 0);
+   ArrayResize(historicalDataSent, 0);
+   historicalDataCount = 0;
+   Print("✅ Reset historical data tracking - Will resend historical candles");
+}
+
+//============================================================
+// Hàm lấy historical candles data cho 1 symbol
+string GetHistoricalCandlesJSON(string symbol, int count)
+{
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+
+   // Copy historical M1 candles
+   int copied = CopyRates(symbol, PERIOD_M1, 0, count, rates);
+
+   if(copied <= 0)
+   {
+      return "[]";  // Trả về array rỗng nếu không có dữ liệu
+   }
+
+   string json = "[";
+
+   for(int i = copied - 1; i >= 0; i--)  // Đảo ngược để cũ → mới
+   {
+      if(i < copied - 1)
+         json += ",";
+
+      // Format: [timestamp, open, high, low, close]
+      json += StringFormat("[%I64d,%.5f,%.5f,%.5f,%.5f]",
+         (long)rates[i].time,
+         rates[i].open,
+         rates[i].high,
+         rates[i].low,
+         rates[i].close
+      );
+   }
+
+   json += "]";
+   return json;
 }
 
 struct TradeSignal {
@@ -186,18 +269,37 @@ string GetMarketWatchData()
       string groupPathRaw = GetSymbolGroupPath(symbol);
       string groupPathJson = EscapeJsonString(groupPathRaw);
 
+      // ✅ Kiểm tra xem đã gửi historical data chưa
+      bool needHistorical = !HasSentHistoricalData(symbol);
+      string historicalJson = "";
+
+      if(needHistorical && HistoricalCandles > 0)
+      {
+         historicalJson = GetHistoricalCandlesJSON(symbol, HistoricalCandles);
+         MarkHistoricalDataSent(symbol);  // Đánh dấu đã gửi
+      }
+
+      // Tạo symbolData JSON (base data)
       string symbolData = StringFormat(
          "{\"symbol\":\"%s\",\"group\":\"%s\",\"bid\":%.5f,\"ask\":%.5f,\"digits\":%d,\"points\":%.5f,\"isOpen\":%s," +
          "\"prev_ohlc\":{\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f}," +
          "\"current_ohlc\":{\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f}," +
-         "\"trade_sessions\":%s}",
+         "\"trade_sessions\":%s",
          symbol, groupPathJson,
          bid, ask, digits, point_value,
          isOpen ? "true" : "false",
          prev_open, prev_high, prev_low, prev_close,
          current_open, current_high, current_low, current_close,
          tradeSessions
-      );      
+      );
+
+      // ✅ Thêm historical_candles nếu cần
+      if(needHistorical && StringLen(historicalJson) > 2)
+      {
+         symbolData += ",\"historical_candles\":" + historicalJson;
+      }
+
+      symbolData += "}";  // Đóng JSON object
 
       if (SendOnlyOpenMarkets && !isOpen) continue;
 
@@ -721,12 +823,18 @@ void FunWriteDataToFile()
 
 //============================================================
 int OnInit()
-{       
+{
    if(!ReadWebServerURL())
    {
      FunWriteDataToFile();
-   }   
-   EventSetTimer(SendInterval);      
+   }
+
+   // ✅ Reset historical data tracking khi EA khởi động
+   // Điều này đảm bảo EA sẽ gửi dữ liệu lịch sử cho tất cả symbols
+   // khi được attach vào chart (bất kể thị trường đang mở hay đóng)
+   ResetHistoricalDataTracking();
+
+   EventSetTimer(SendInterval);
    return(INIT_SUCCEEDED);
 }
 
