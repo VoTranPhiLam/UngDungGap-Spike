@@ -2125,8 +2125,13 @@ class GapSpikeDetectorGUI:
         self.delay_tree.column('Last Change', width=120)
         self.delay_tree.column('Delay Time', width=100)
         self.delay_tree.column('Status', width=200)
-        
-        self.delay_tree.pack(fill=tk.X, pady=5)
+
+        # Scrollbar for delay board
+        delay_vsb = ttk.Scrollbar(delay_frame, orient="vertical", command=self.delay_tree.yview)
+        self.delay_tree.configure(yscrollcommand=delay_vsb.set)
+
+        self.delay_tree.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=5)
+        delay_vsb.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Tags for delay status
         self.delay_tree.tag_configure('delay_warning', background='#fff4cc')  # Yellow
@@ -2259,15 +2264,15 @@ class GapSpikeDetectorGUI:
         self.tree.column('Spike Threshold', width=130)
         self.tree.column('Status', width=80)
         
-        # Scrollbars
+        # Scrollbars - pack in correct order for proper display
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        
-        # Use pack() instead of grid() for consistency with parent container
-        self.tree.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Pack scrollbars first to reserve space, then tree
         hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
