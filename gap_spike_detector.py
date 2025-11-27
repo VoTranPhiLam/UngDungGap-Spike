@@ -78,8 +78,12 @@ screenshot_settings = {
     'save_gap': True,  # Save screenshot for gap
     'save_spike': True,  # Save screenshot for spike
     'folder': 'pictures',  # Folder to save screenshots
-    'assigned_name': ''  # Selected name for Picture Gallery exports
+    'assigned_name': '',  # Selected name for Picture Gallery exports
+    'startup_delay_minutes': 5  # Delay in minutes before screenshot starts working after startup
 }
+
+# Track application startup time for screenshot delay
+app_startup_time = time.time()
 
 # ===================== AUDIO ALERT SETTINGS =====================
 audio_settings = {
@@ -89,9 +93,14 @@ audio_settings = {
     'delay_sound': 'sounds/Delay.wav'  # Sound file for Delay detection
 }
 
-# Track which (broker, symbol, type) combinations have already played sound
-audio_played_tracking = {}  # {broker_symbol_type: last_played_time}
-AUDIO_REPLAY_COOLDOWN = 30  # Only allow replaying the same alert after 30 seconds
+# Track audio alerts per type (not per product)
+# Logic: Chỉ báo 1 lần khi có item trong bảng, sau 3 phút vẫn còn thì báo lại
+audio_alert_state = {
+    'gap': {'last_alert_time': 0, 'board_had_items': False},
+    'spike': {'last_alert_time': 0, 'board_had_items': False},
+    'delay': {'last_alert_time': 0, 'board_had_items': False}
+}
+AUDIO_ALERT_REPEAT_INTERVAL = 180  # Repeat alert after 3 minutes (180 seconds) if still has items
 
 symbol_filter_settings = {
     'enabled': False,  # Chỉ xét Gap/Spike cho symbols được chọn khi bật
@@ -395,22 +404,87 @@ def push_to_google_sheets(accepted_items):
         return False, error_msg
 
 # ===================== AUDIO ALERT FUNCTIONS =====================
-def play_audio(audio_type, broker, symbol):
+def check_and_play_board_alert(alert_type):
     """
-    Phát âm thanh cảnh báo cho Gap/Spike/Delay
-    
+    Kiểm tra và phát âm thanh cho toàn bộ bảng (không phải từng sản phẩm)
+
+    Logic:
+    - Chỉ báo 1 lần khi có item trong bảng
+    - Sau 3 phút vẫn còn item thì báo lại
+    - Nếu bảng hết item rồi có lại thì báo lại
+
     Args:
-        audio_type: 'gap', 'spike', hoặc 'delay'
-        broker: Broker name
-        symbol: Symbol name
-    
-    Chỉ phát 1 lần cho mỗi sản phẩm, có cooldown 30 giây trước khi phát lại
+        alert_type: 'gap', 'spike', hoặc 'delay'
     """
     try:
         # Check if audio alerts are enabled
         if not audio_settings.get('enabled', True):
             return
-        
+
+        # Check if this alert type exists
+        if alert_type not in audio_alert_state:
+            return
+
+        # Count items in board with this alert type
+        current_time = time.time()
+        has_items = False
+
+        if alert_type == 'delay':
+            # Check delay board
+            delay_threshold = delay_settings.get('threshold', 180)
+            for key, bid_info in bid_tracking.items():
+                delay_duration = current_time - bid_info['last_change_time']
+                if delay_duration >= delay_threshold:
+                    has_items = True
+                    break
+        else:
+            # Check alert board for gap/spike
+            for key, alert_info in alert_board.items():
+                result = alert_info.get('data', {})
+                if alert_type == 'gap' and result.get('gap', {}).get('detected', False):
+                    has_items = True
+                    break
+                elif alert_type == 'spike' and result.get('spike', {}).get('detected', False):
+                    has_items = True
+                    break
+
+        # Get state
+        state = audio_alert_state[alert_type]
+        board_had_items = state['board_had_items']
+        last_alert_time = state['last_alert_time']
+
+        # Determine if we should play alert
+        should_play = False
+
+        if has_items:
+            if not board_had_items:
+                # Board was empty, now has items -> Play alert
+                should_play = True
+                logger.info(f"Board alert: {alert_type} - First detection (board was empty)")
+            elif current_time - last_alert_time >= AUDIO_ALERT_REPEAT_INTERVAL:
+                # Board has items for 3+ minutes -> Play alert again
+                should_play = True
+                logger.info(f"Board alert: {alert_type} - Repeat after {AUDIO_ALERT_REPEAT_INTERVAL}s")
+
+        # Update state
+        state['board_had_items'] = has_items
+
+        # Play audio if needed
+        if should_play:
+            state['last_alert_time'] = current_time
+            _play_audio_for_type(alert_type)
+
+    except Exception as e:
+        logger.error(f"Error checking board alert: {e}")
+
+def _play_audio_for_type(audio_type):
+    """
+    Phát âm thanh cho alert type (không cần broker/symbol)
+
+    Args:
+        audio_type: 'gap', 'spike', hoặc 'delay'
+    """
+    try:
         # Get sound file path based on type
         if audio_type == 'gap':
             sound_file = audio_settings.get('gap_sound', 'sounds/Gap.mp3')
@@ -420,31 +494,17 @@ def play_audio(audio_type, broker, symbol):
             sound_file = audio_settings.get('delay_sound', 'sounds/Delay.mp3')
         else:
             return
-        
+
         # Check if file exists
         if not os.path.exists(sound_file):
             logger.warning(f"Audio file not found: {sound_file}")
             return
-        
-        # Create tracking key
-        tracking_key = f"{broker}_{symbol}_{audio_type}"
-        current_time = time.time()
-        
-        # Check if already played recently (cooldown)
-        if tracking_key in audio_played_tracking:
-            last_played = audio_played_tracking[tracking_key]
-            if current_time - last_played < AUDIO_REPLAY_COOLDOWN:
-                # Still in cooldown period
-                return
-        
-        # Mark as played
-        audio_played_tracking[tracking_key] = current_time
 
         # Submit to thread pool (max 5 concurrent audio playbacks)
-        audio_executor.submit(_play_audio_thread, sound_file, audio_type, broker, symbol)
+        audio_executor.submit(_play_audio_thread, sound_file, audio_type, '', '')
 
-        logger.info(f"Playing audio alert: {audio_type} for {broker}_{symbol} ({sound_file})")
-        
+        logger.info(f"Playing board audio alert: {audio_type} ({sound_file})")
+
     except Exception as e:
         logger.error(f"Error playing audio: {e}")
 
@@ -1024,7 +1084,7 @@ def ensure_pictures_folder():
 def capture_chart_screenshot(broker, symbol, detection_type, gap_info=None, spike_info=None, server_timestamp=None):
     """
     Capture screenshot of chart when gap/spike detected
-    
+
     Args:
         broker: Broker name
         symbol: Symbol name
@@ -1037,7 +1097,19 @@ def capture_chart_screenshot(broker, symbol, detection_type, gap_info=None, spik
         # Check if screenshot is enabled
         if not screenshot_settings['enabled']:
             return
-        
+
+        # Check startup delay - chỉ bắt đầu chụp sau X phút kể từ khi khởi động
+        startup_delay_minutes = screenshot_settings.get('startup_delay_minutes', 5)
+        startup_delay_seconds = startup_delay_minutes * 60
+        current_time = time.time()
+        time_since_startup = current_time - app_startup_time
+
+        if time_since_startup < startup_delay_seconds:
+            remaining_seconds = int(startup_delay_seconds - time_since_startup)
+            remaining_minutes = remaining_seconds // 60
+            logger.debug(f"Screenshot chưa bật (còn {remaining_minutes} phút {remaining_seconds % 60} giây)")
+            return
+
         # Check if we should save this type
         if detection_type == 'gap' and not screenshot_settings['save_gap']:
             return
@@ -1925,23 +1997,13 @@ def receive_data():
 
                 # Update Alert Board (Bảng Kèo)
                 update_alert_board(key, gap_spike_results[key])
-                
-                # 🔊 PHÁT ÂM THANH CẢnh báo khi phát hiện Gap/Spike/Delay
-                # Gap alert
-                if gap_info.get('detected'):
-                    play_audio('gap', broker, symbol)
-                
-                # Spike alert
-                if spike_info.get('detected'):
-                    play_audio('spike', broker, symbol)
-                
-                # Delay alert
-                if key in bid_tracking:
-                    delay_duration = current_time - bid_tracking[key]['last_change_time']
-                    delay_threshold = delay_settings.get('threshold', 180)
-                    if delay_duration >= delay_threshold:
-                        play_audio('delay', broker, symbol)
-        
+
+        # 🔊 PHÁT ÂM THANH CẢnh báo cho toàn bộ bảng (sau khi xử lý tất cả symbols)
+        # Check and play board alerts (not per-product, but for entire board)
+        check_and_play_board_alert('gap')
+        check_and_play_board_alert('spike')
+        check_and_play_board_alert('delay')
+
         # Cleanup old/stale data (brokers không còn gửi data)
         cleanup_stale_data()
         
@@ -4235,6 +4297,25 @@ class SettingsWindow:
 
         ttk.Button(folder_frame, text="📂 Mở thư mục",
                   command=self.open_screenshots_folder).grid(row=0, column=2, padx=5, pady=5)
+
+        # Startup delay settings
+        delay_frame = ttk.LabelFrame(screenshot_frame, text="⏱️ Delay sau khi khởi động", padding="10")
+        delay_frame.pack(fill=tk.X, pady=5)
+
+        delay_info_label = ttk.Label(delay_frame,
+                                     text="Thời gian chờ sau khi khởi động Python trước khi bắt đầu chụp màn hình:",
+                                     foreground='blue')
+        delay_info_label.pack(anchor=tk.W, pady=5)
+
+        delay_input_frame = ttk.Frame(delay_frame)
+        delay_input_frame.pack(anchor=tk.W, pady=5)
+
+        ttk.Label(delay_input_frame, text="Delay (phút):").pack(side=tk.LEFT, padx=5)
+        self.screenshot_startup_delay_var = tk.IntVar(value=screenshot_settings.get('startup_delay_minutes', 5))
+        delay_spinbox = ttk.Spinbox(delay_input_frame, from_=0, to=60, width=10,
+                                   textvariable=self.screenshot_startup_delay_var)
+        delay_spinbox.pack(side=tk.LEFT, padx=5)
+        ttk.Label(delay_input_frame, text="(0 = không delay, max 60 phút)").pack(side=tk.LEFT, padx=5)
         
         # Info
         info_frame = ttk.Frame(screenshot_frame)
@@ -4266,16 +4347,18 @@ class SettingsWindow:
             screenshot_settings['save_gap'] = self.screenshot_gap_var.get()
             screenshot_settings['save_spike'] = self.screenshot_spike_var.get()
             screenshot_settings['folder'] = self.screenshot_folder_var.get()
-            
+            screenshot_settings['startup_delay_minutes'] = self.screenshot_startup_delay_var.get()
+
             save_screenshot_settings()
             ensure_pictures_folder()
-            
-            messagebox.showinfo("Success", 
+
+            messagebox.showinfo("Success",
                               f"Đã lưu screenshot settings:\n"
                               f"- Enabled: {screenshot_settings['enabled']}\n"
                               f"- Save Gap: {screenshot_settings['save_gap']}\n"
                               f"- Save Spike: {screenshot_settings['save_spike']}\n"
-                              f"- Folder: {screenshot_settings['folder']}")
+                              f"- Folder: {screenshot_settings['folder']}\n"
+                              f"- Startup delay: {screenshot_settings['startup_delay_minutes']} phút")
         except Exception as e:
             logger.error(f"Error saving screenshot settings: {e}")
             messagebox.showerror("Error", f"Failed to save: {str(e)}")
