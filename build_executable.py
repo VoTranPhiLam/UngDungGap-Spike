@@ -37,6 +37,7 @@ def main():
         "--windowed",
         "--icon=icon.ico",  # Optional: add icon if you have one
         "--add-data=*.json;.",
+        "--add-data=sounds;sounds",  # Include sounds folder
         "--hidden-import=PIL._tkinter_finder",
         "--collect-all=matplotlib",
         "--collect-all=flask",
