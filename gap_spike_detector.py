@@ -154,6 +154,353 @@ SHEET_ID_CACHE_FILE = "sheet_id_cache.json"  # Cache sheet ID to reuse (avoid cr
 
 data_lock = threading.Lock()
 
+# ===================== GAP/SPIKE CONFIG FROM FILE =====================
+# Cấu hình Gap/Spike từ file THAM_SO_GAP_INDICATOR.txt
+gap_config = {}  # {symbol_chuan: {aliases: [...], default_gap_percent: float, custom_gap: int}}
+gap_config_reverse_map = {}  # {alias_lower: symbol_chuan} - for fast lookup
+GAP_CONFIG_FILE = 'THAM_SO_GAP_INDICATOR.txt'
+
+# Results for symbols with Point-based calculation
+gap_spike_point_results = {}  # {broker_symbol: {gap_info, spike_info, matched_alias, ...}}
+
+def load_gap_config_file():
+    """
+    Đọc file THAM_SO_GAP_INDICATOR.txt và parse thành gap_config
+
+    Format file:
+    SYMBOL;ALIAS1;ALIAS2;ALIAS3;...;DEFAULT_GAP;CUSTOM_GAP
+
+    Returns:
+        dict: gap_config dictionary
+    """
+    global gap_config, gap_config_reverse_map
+
+    if not os.path.exists(GAP_CONFIG_FILE):
+        logger.warning(f"File {GAP_CONFIG_FILE} không tồn tại. Hệ thống sẽ dùng tính toán Gap/Spike theo % cho tất cả symbols.")
+        return {}
+
+    try:
+        config = {}
+        reverse_map = {}
+
+        with open(GAP_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+
+                # Parse line
+                parts = line.split(';')
+
+                if len(parts) < 3:
+                    logger.warning(f"Line {line_num} in {GAP_CONFIG_FILE} has invalid format (< 3 fields): {line}")
+                    continue
+
+                # Extract fields
+                symbol_chuan = parts[0].strip()
+
+                # All fields except first and last 2 are aliases
+                aliases = [p.strip() for p in parts[1:-2] if p.strip()]
+
+                # Last 2 fields
+                try:
+                    default_gap_percent = float(parts[-2].strip())
+                    custom_gap = int(parts[-1].strip())
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Line {line_num} in {GAP_CONFIG_FILE} has invalid numeric values: {line} - {e}")
+                    continue
+
+                # Store config
+                config[symbol_chuan] = {
+                    'aliases': aliases,
+                    'default_gap_percent': default_gap_percent,
+                    'custom_gap': custom_gap
+                }
+
+                # Build reverse map for fast lookup (case-insensitive)
+                # Map symbol_chuan itself
+                reverse_map[symbol_chuan.lower()] = symbol_chuan
+
+                # Map all aliases
+                for alias in aliases:
+                    reverse_map[alias.lower()] = symbol_chuan
+
+                logger.info(f"Loaded config for {symbol_chuan}: {len(aliases)} aliases, gap={default_gap_percent}%")
+
+        gap_config = config
+        gap_config_reverse_map = reverse_map
+
+        logger.info(f"✅ Loaded {len(gap_config)} symbols from {GAP_CONFIG_FILE}")
+        return config
+
+    except Exception as e:
+        logger.error(f"Error loading {GAP_CONFIG_FILE}: {e}", exc_info=True)
+        return {}
+
+def find_symbol_config(symbol):
+    """
+    Tìm cấu hình cho symbol (matching với aliases, case-insensitive)
+
+    Args:
+        symbol: Symbol name to search
+
+    Returns:
+        tuple: (symbol_chuan, config_dict, matched_alias) or (None, None, None)
+    """
+    if not gap_config:
+        return None, None, None
+
+    symbol_lower = symbol.lower().strip()
+
+    # Lookup in reverse map (O(1) - very fast)
+    symbol_chuan = gap_config_reverse_map.get(symbol_lower)
+
+    if symbol_chuan:
+        config = gap_config[symbol_chuan]
+
+        # Determine which alias matched
+        if symbol_lower == symbol_chuan.lower():
+            matched_alias = symbol_chuan  # Exact match with canonical symbol
+        else:
+            matched_alias = symbol  # Matched via alias
+
+        return symbol_chuan, config, matched_alias
+
+    return None, None, None
+
+def calculate_gap_point(symbol, broker, data, spread_percent=None):
+    """
+    Tính toán GAP theo Point (cho symbols có cấu hình trong file txt)
+
+    Công thức:
+    - pointGap = abs(Open_now - Close_prev) / point_value
+    - Nếu Open_now > Close_prev AND pointGap >= ThresholdPoint → GAP UP
+    - Nếu Open_now < Close_prev AND pointGap >= ThresholdPoint → GAP DOWN
+
+    ThresholdPoint = DEFAULT_GAP / PointDigits
+
+    Args:
+        symbol: Symbol name
+        broker: Broker name
+        data: Market data dictionary
+        spread_percent: Pre-calculated spread percent (optional)
+
+    Returns:
+        dict: Gap detection result
+    """
+    try:
+        # Find symbol config
+        symbol_chuan, config, matched_alias = find_symbol_config(symbol)
+
+        if not config:
+            # No config found - should not reach here
+            return {
+                'detected': False,
+                'direction': 'none',
+                'point_gap': 0.0,
+                'message': 'Không có cấu hình'
+            }
+
+        prev_ohlc = data.get('prev_ohlc', {})
+        current_ohlc = data.get('current_ohlc', {})
+
+        prev_close = float(prev_ohlc.get('close', 0))
+        current_open = float(current_ohlc.get('open', 0))
+
+        # Get bid/ask
+        current_ask = float(data.get('ask', 0))
+        current_bid = float(data.get('bid', 0))
+
+        # Get point value from data
+        point_value = float(data.get('points', 0.00001))
+        digits = int(data.get('digits', 5))
+
+        if prev_close == 0 or point_value == 0:
+            return {
+                'detected': False,
+                'direction': 'none',
+                'point_gap': 0.0,
+                'threshold_point': 0,
+                'message': 'Chưa đủ dữ liệu'
+            }
+
+        # Calculate threshold in points
+        # ThresholdPoint = DEFAULT_GAP / PointDigits
+        default_gap_percent = config['default_gap_percent']
+        threshold_point = default_gap_percent / point_value
+
+        # Calculate point gap
+        point_gap = abs(current_open - prev_close) / point_value
+
+        # Determine direction
+        if current_open > prev_close:
+            direction = 'up'
+            # Gap Up condition: pointGap >= ThresholdPoint
+            detected = point_gap >= threshold_point
+        elif current_open < prev_close:
+            direction = 'down'
+            # Gap Down condition: pointGap >= ThresholdPoint AND Ask < Close_prev
+            detected = (point_gap >= threshold_point) and (current_ask < prev_close)
+        else:
+            direction = 'none'
+            detected = False
+
+        # Build message
+        if detected:
+            if direction == 'up':
+                message = (
+                    f"GAP UP (Point): {point_gap:.1f} points "
+                    f"(Open: {current_open:.5f}, Close_prev: {prev_close:.5f}, "
+                    f"ngưỡng: {threshold_point:.1f} points / {default_gap_percent}%)"
+                )
+            else:
+                message = (
+                    f"GAP DOWN (Point): {point_gap:.1f} points "
+                    f"(Open: {current_open:.5f}, Ask: {current_ask:.5f} < Close_prev: {prev_close:.5f}, "
+                    f"ngưỡng: {threshold_point:.1f} points / {default_gap_percent}%)"
+                )
+        else:
+            if direction == 'down' and point_gap >= threshold_point:
+                message = f"Gap Down: {point_gap:.1f} points (Ask {current_ask:.5f} >= Close_prev {prev_close:.5f} - Không hợp lệ)"
+            else:
+                message = f"Gap: {point_gap:.1f} points"
+
+        result = {
+            'detected': detected,
+            'direction': direction,
+            'point_gap': point_gap,
+            'threshold_point': threshold_point,
+            'default_gap_percent': default_gap_percent,
+            'previous_close': prev_close,
+            'current_open': current_open,
+            'current_ask': current_ask,
+            'point_value': point_value,
+            'digits': digits,
+            'message': message,
+            'symbol_chuan': symbol_chuan,
+            'matched_alias': matched_alias
+        }
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error calculating gap (point) for {symbol}: {e}")
+        return {
+            'detected': False,
+            'direction': 'none',
+            'point_gap': 0.0,
+            'message': f'Lỗi: {str(e)}'
+        }
+
+def calculate_spike_point(symbol, broker, data, spread_percent=None):
+    """
+    Tính toán SPIKE theo Point (cho symbols có cấu hình trong file txt)
+
+    Công thức:
+    - spike_realtime = abs(Bid_now - Bid_prev) / point_value
+    - Nếu spike_realtime >= ThresholdPoint → SPIKE
+
+    ThresholdPoint = DEFAULT_GAP / PointDigits (dùng chung với Gap)
+
+    Args:
+        symbol: Symbol name
+        broker: Broker name
+        data: Market data dictionary
+        spread_percent: Pre-calculated spread percent (optional)
+
+    Returns:
+        dict: Spike detection result
+    """
+    try:
+        # Find symbol config
+        symbol_chuan, config, matched_alias = find_symbol_config(symbol)
+
+        if not config:
+            # No config found
+            return {
+                'detected': False,
+                'spike_point': 0.0,
+                'message': 'Không có cấu hình'
+            }
+
+        # Get current bid
+        current_bid = float(data.get('bid', 0))
+
+        # Get point value
+        point_value = float(data.get('points', 0.00001))
+        digits = int(data.get('digits', 5))
+
+        if point_value == 0 or current_bid == 0:
+            return {
+                'detected': False,
+                'spike_point': 0.0,
+                'threshold_point': 0,
+                'message': 'Chưa đủ dữ liệu'
+            }
+
+        # Calculate threshold in points (same as gap threshold)
+        default_gap_percent = config['default_gap_percent']
+        threshold_point = default_gap_percent / point_value
+
+        # Track previous bid for this symbol
+        key = f"{broker}_{symbol}"
+
+        if key not in bid_tracking:
+            # First time - no previous bid
+            return {
+                'detected': False,
+                'spike_point': 0.0,
+                'threshold_point': threshold_point,
+                'default_gap_percent': default_gap_percent,
+                'message': 'Đang theo dõi bid đầu tiên',
+                'symbol_chuan': symbol_chuan,
+                'matched_alias': matched_alias
+            }
+
+        prev_bid = bid_tracking[key].get('last_bid', current_bid)
+
+        # Calculate spike in points
+        spike_point = abs(current_bid - prev_bid) / point_value
+
+        # Detect spike
+        detected = spike_point >= threshold_point
+
+        # Build message
+        if detected:
+            message = (
+                f"SPIKE (Point): {spike_point:.1f} points "
+                f"(Bid: {current_bid:.5f}, Bid_prev: {prev_bid:.5f}, "
+                f"ngưỡng: {threshold_point:.1f} points / {default_gap_percent}%)"
+            )
+        else:
+            message = f"Spike: {spike_point:.1f} points"
+
+        result = {
+            'detected': detected,
+            'spike_point': spike_point,
+            'threshold_point': threshold_point,
+            'default_gap_percent': default_gap_percent,
+            'current_bid': current_bid,
+            'previous_bid': prev_bid,
+            'point_value': point_value,
+            'digits': digits,
+            'message': message,
+            'symbol_chuan': symbol_chuan,
+            'matched_alias': matched_alias
+        }
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error calculating spike (point) for {symbol}: {e}")
+        return {
+            'detected': False,
+            'spike_point': 0.0,
+            'message': f'Lỗi: {str(e)}'
+        }
+
 # ===================== THREAD POOL EXECUTORS =====================
 # Giới hạn số lượng threads đồng thời để tránh resource exhaustion
 audio_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix='audio')
@@ -1970,8 +2317,31 @@ def receive_data():
                         symbol_market_data.get('bid', 0),
                         symbol_market_data.get('ask', 0)
                     )
-                    gap_info = calculate_gap(symbol, broker, symbol_market_data, spread_percent)
-                    spike_info = calculate_spike(symbol, broker, symbol_market_data, spread_percent)
+
+                    # ✨ NEW: Check if symbol has config (Point-based calculation)
+                    symbol_chuan, config, matched_alias = find_symbol_config(symbol)
+
+                    if config:
+                        # Symbol có cấu hình → Dùng Point-based calculation
+                        gap_info = calculate_gap_point(symbol, broker, symbol_market_data, spread_percent)
+                        spike_info = calculate_spike_point(symbol, broker, symbol_market_data, spread_percent)
+
+                        # Lưu vào gap_spike_point_results (riêng biệt)
+                        gap_spike_point_results[key] = {
+                            'symbol': symbol,
+                            'broker': broker,
+                            'timestamp': timestamp,
+                            'price': (symbol_market_data['bid'] + symbol_market_data['ask']) / 2,
+                            'gap': gap_info,
+                            'spike': spike_info,
+                            'symbol_chuan': symbol_chuan,
+                            'matched_alias': matched_alias,
+                            'calculation_type': 'point'
+                        }
+                    else:
+                        # Symbol không có cấu hình → Dùng % calculation (cũ)
+                        gap_info = calculate_gap(symbol, broker, symbol_market_data, spread_percent)
+                        spike_info = calculate_spike(symbol, broker, symbol_market_data, spread_percent)
                 else:
                     # Không tính gap/spike (do market đóng hoặc skip period)
                     gap_info = {
@@ -2221,9 +2591,87 @@ class GapSpikeDetectorGUI:
         
         # Bind double-click to open chart
         self.alert_tree.bind('<Double-Button-1>', self.on_alert_double_click)
-        
-        # Main Table Frame
-        table_frame = ttk.LabelFrame(self.root, text="Kết quả phát hiện Gap & Spike", padding="10")
+
+        # ===================== BẢNG 1: POINT-BASED (Có cấu hình từ file) =====================
+        point_table_frame = ttk.LabelFrame(self.root, text="📊 Bảng 1: Sản phẩm có thông số Gap/Spike (Point-based)", padding="10")
+        point_table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Columns for Point-based table
+        point_columns = ('Broker', 'Symbol', 'Alias Matched', 'Default Gap %', 'Threshold (Point)', 'Status', 'Gap/Spike (Point)')
+        self.point_tree = ttk.Treeview(point_table_frame, columns=point_columns, show='headings', height=8)
+
+        self.point_tree.heading('Broker', text='Broker')
+        self.point_tree.heading('Symbol', text='Symbol')
+        self.point_tree.heading('Alias Matched', text='Alias khớp')
+        self.point_tree.heading('Default Gap %', text='Default Gap %')
+        self.point_tree.heading('Threshold (Point)', text='Ngưỡng (Point)')
+        self.point_tree.heading('Status', text='Trạng thái')
+        self.point_tree.heading('Gap/Spike (Point)', text='Gap/Spike (Point)')
+
+        self.point_tree.column('Broker', width=100)
+        self.point_tree.column('Symbol', width=100)
+        self.point_tree.column('Alias Matched', width=100)
+        self.point_tree.column('Default Gap %', width=100)
+        self.point_tree.column('Threshold (Point)', width=120)
+        self.point_tree.column('Status', width=120)
+        self.point_tree.column('Gap/Spike (Point)', width=150)
+
+        # Scrollbars
+        point_vsb = ttk.Scrollbar(point_table_frame, orient="vertical", command=self.point_tree.yview)
+        point_hsb = ttk.Scrollbar(point_table_frame, orient="horizontal", command=self.point_tree.xview)
+        self.point_tree.configure(yscrollcommand=point_vsb.set, xscrollcommand=point_hsb.set)
+
+        point_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        point_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.point_tree.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+
+        # Tags for colors
+        self.point_tree.tag_configure('gap_detected', background='#ffcccc')
+        self.point_tree.tag_configure('spike_detected', background='#ccffcc')
+        self.point_tree.tag_configure('both_detected', background='#ffffcc')
+
+        # Bind double-click
+        self.point_tree.bind('<Double-Button-1>', self.on_point_symbol_double_click)
+
+        # ===================== BẢNG 2: PERCENT-BASED (Không có cấu hình) =====================
+        percent_table_frame = ttk.LabelFrame(self.root, text="📈 Bảng 2: Sản phẩm không có thông số riêng (Percent-based)", padding="10")
+        percent_table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Columns for Percent-based table
+        percent_columns = ('Broker', 'Symbol', 'Gap %', 'Spike %', 'Status')
+        self.percent_tree = ttk.Treeview(percent_table_frame, columns=percent_columns, show='headings', height=8)
+
+        self.percent_tree.heading('Broker', text='Broker')
+        self.percent_tree.heading('Symbol', text='Symbol')
+        self.percent_tree.heading('Gap %', text='Gap %')
+        self.percent_tree.heading('Spike %', text='Spike %')
+        self.percent_tree.heading('Status', text='Trạng thái')
+
+        self.percent_tree.column('Broker', width=100)
+        self.percent_tree.column('Symbol', width=100)
+        self.percent_tree.column('Gap %', width=120)
+        self.percent_tree.column('Spike %', width=120)
+        self.percent_tree.column('Status', width=200)
+
+        # Scrollbars
+        percent_vsb = ttk.Scrollbar(percent_table_frame, orient="vertical", command=self.percent_tree.yview)
+        percent_hsb = ttk.Scrollbar(percent_table_frame, orient="horizontal", command=self.percent_tree.xview)
+        self.percent_tree.configure(yscrollcommand=percent_vsb.set, xscrollcommand=percent_hsb.set)
+
+        percent_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        percent_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.percent_tree.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+
+        # Tags for colors
+        self.percent_tree.tag_configure('gap_detected', background='#ffcccc')
+        self.percent_tree.tag_configure('spike_detected', background='#ccffcc')
+        self.percent_tree.tag_configure('both_detected', background='#ffffcc')
+
+        # Bind double-click
+        self.percent_tree.bind('<Double-Button-1>', self.on_percent_symbol_double_click)
+
+        # Main Table Frame (LEGACY - Giữ lại cho tương thích)
+        table_frame = ttk.LabelFrame(self.root, text="Kết quả phát hiện Gap & Spike (Legacy - Tất cả)", padding="10")
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         # Search/Filter Frame
@@ -2307,8 +2755,11 @@ class GapSpikeDetectorGUI:
                 
                 # Update alert board
                 self.update_alert_board_display()
-                
-                # Clear existing items
+
+                # ✨ Update Point-based and Percent-based tables
+                self.update_point_percent_tables()
+
+                # Clear existing items (Legacy table)
                 for item in self.tree.get_children():
                     self.tree.delete(item)
                 
@@ -2667,7 +3118,191 @@ class GapSpikeDetectorGUI:
                 '-',
                 '-'
             ))
-    
+
+    def update_point_percent_tables(self):
+        """
+        ✨ Cập nhật 2 bảng riêng biệt:
+        - Bảng 1: Point-based (symbols có cấu hình)
+        - Bảng 2: Percent-based (symbols không có cấu hình)
+        """
+        # Clear existing items
+        for item in self.point_tree.get_children():
+            self.point_tree.delete(item)
+        for item in self.percent_tree.get_children():
+            self.percent_tree.delete(item)
+
+        # ===== BẢNG 1: POINT-BASED =====
+        # Sort by broker name
+        sorted_point_results = sorted(
+            gap_spike_point_results.items(),
+            key=lambda x: (x[1].get('broker', ''), x[1].get('symbol', ''))
+        )
+
+        for key, result in sorted_point_results:
+            symbol = result.get('symbol', '')
+            broker = result.get('broker', '')
+            symbol_chuan = result.get('symbol_chuan', '')
+            matched_alias = result.get('matched_alias', '')
+            gap_info = result.get('gap', {})
+            spike_info = result.get('spike', {})
+
+            gap_detected = gap_info.get('detected', False)
+            spike_detected = spike_info.get('detected', False)
+
+            # Get values
+            default_gap_percent = gap_info.get('default_gap_percent', 0)
+            threshold_point = gap_info.get('threshold_point', 0)
+            point_gap = gap_info.get('point_gap', 0)
+            spike_point = spike_info.get('spike_point', 0)
+
+            # Status
+            status_parts = []
+            if gap_detected:
+                gap_dir = gap_info.get('direction', 'none').upper()
+                status_parts.append(f"GAP {gap_dir}")
+            if spike_detected:
+                status_parts.append("SPIKE")
+            status = " + ".join(status_parts) if status_parts else "Normal"
+
+            # Gap/Spike display
+            gap_spike_display = []
+            if gap_detected:
+                gap_spike_display.append(f"Gap: {point_gap:.1f}pt")
+            if spike_detected:
+                gap_spike_display.append(f"Spike: {spike_point:.1f}pt")
+            gap_spike_str = " | ".join(gap_spike_display) if gap_spike_display else "-"
+
+            # Determine tag
+            tag = ''
+            if gap_detected and spike_detected:
+                tag = 'both_detected'
+            elif gap_detected:
+                tag = 'gap_detected'
+            elif spike_detected:
+                tag = 'spike_detected'
+
+            # Insert row
+            self.point_tree.insert('', 'end', values=(
+                broker,
+                symbol,
+                matched_alias,
+                f"{default_gap_percent:.3f}%",
+                f"{threshold_point:.1f}",
+                status,
+                gap_spike_str
+            ), tags=(tag,))
+
+        # If no point-based symbols
+        if not gap_spike_point_results:
+            self.point_tree.insert('', 'end', values=(
+                'Không có sản phẩm',
+                '-',
+                '-',
+                '-',
+                '-',
+                'Chờ dữ liệu từ EA...',
+                '-'
+            ))
+
+        # ===== BẢNG 2: PERCENT-BASED =====
+        # Sort by broker name
+        sorted_percent_results = sorted(
+            gap_spike_results.items(),
+            key=lambda x: (x[1].get('broker', ''), x[1].get('symbol', ''))
+        )
+
+        for key, result in sorted_percent_results:
+            symbol = result.get('symbol', '')
+            broker = result.get('broker', '')
+
+            # Skip if this symbol is in point-based results
+            if key in gap_spike_point_results:
+                continue
+
+            gap_info = result.get('gap', {})
+            spike_info = result.get('spike', {})
+
+            gap_detected = gap_info.get('detected', False)
+            spike_detected = spike_info.get('detected', False)
+
+            # Get percentages
+            gap_percent = gap_info.get('percentage', 0)
+            spike_percent = spike_info.get('strength', 0)
+
+            # Status
+            status_parts = []
+            if gap_detected:
+                gap_dir = gap_info.get('direction', 'none').upper()
+                status_parts.append(f"GAP {gap_dir}: {gap_percent:.3f}%")
+            if spike_detected:
+                status_parts.append(f"SPIKE: {spike_percent:.3f}%")
+            status = " | ".join(status_parts) if status_parts else "Normal"
+
+            # Determine tag
+            tag = ''
+            if gap_detected and spike_detected:
+                tag = 'both_detected'
+            elif gap_detected:
+                tag = 'gap_detected'
+            elif spike_detected:
+                tag = 'spike_detected'
+
+            # Insert row
+            self.percent_tree.insert('', 'end', values=(
+                broker,
+                symbol,
+                f"{gap_percent:.3f}%",
+                f"{spike_percent:.3f}%",
+                status
+            ), tags=(tag,))
+
+        # If no percent-based symbols
+        if not any(key not in gap_spike_point_results for key in gap_spike_results.keys()):
+            if gap_spike_results:
+                # All symbols are point-based
+                self.percent_tree.insert('', 'end', values=(
+                    'Tất cả sản phẩm',
+                    'đều có cấu hình',
+                    '-',
+                    '-',
+                    'Xem Bảng 1 ở trên'
+                ))
+            else:
+                # No symbols at all
+                self.percent_tree.insert('', 'end', values=(
+                    'Không có sản phẩm',
+                    '-',
+                    '-',
+                    '-',
+                    'Chờ dữ liệu từ EA...'
+                ))
+
+    def on_point_symbol_double_click(self, event):
+        """Handle double-click on Point-based table"""
+        try:
+            item = self.point_tree.selection()[0]
+            values = self.point_tree.item(item, 'values')
+            broker = values[0]
+            symbol = values[1]
+            self.open_chart_window(broker, symbol)
+        except IndexError:
+            pass
+        except Exception as e:
+            logger.error(f"Error handling point symbol double-click: {e}")
+
+    def on_percent_symbol_double_click(self, event):
+        """Handle double-click on Percent-based table"""
+        try:
+            item = self.percent_tree.selection()[0]
+            values = self.percent_tree.item(item, 'values')
+            broker = values[0]
+            symbol = values[1]
+            self.open_chart_window(broker, symbol)
+        except IndexError:
+            pass
+        except Exception as e:
+            logger.error(f"Error handling percent symbol double-click: {e}")
+
     def clear_alerts(self):
         """Xóa tất cả alerts"""
         with data_lock:
@@ -2713,13 +3348,16 @@ class GapSpikeDetectorGUI:
             with data_lock:
                 market_data.clear()
                 gap_spike_results.clear()
+                gap_spike_point_results.clear()  # ✨ Clear point-based results
                 alert_board.clear()
                 bid_tracking.clear()
                 # candle_data.clear()  # ← KHÔNG xóa để giữ lại chart data
-            
+
             self.tree.delete(*self.tree.get_children())
             self.alert_tree.delete(*self.alert_tree.get_children())
             self.delay_tree.delete(*self.delay_tree.get_children())
+            self.point_tree.delete(*self.point_tree.get_children())  # ✨ Clear point table
+            self.percent_tree.delete(*self.percent_tree.get_children())  # ✨ Clear percent table
             self.connection_warning_label.pack_forget()
             
             if show_message:
@@ -7242,7 +7880,10 @@ def main():
     load_market_open_settings()
     load_auto_send_settings()
     load_python_reset_settings()
-    
+
+    # Load gap/spike config from file (Point-based calculation)
+    load_gap_config_file()
+
     # Ensure pictures folder exists
     ensure_pictures_folder()
     
@@ -7260,6 +7901,7 @@ def main():
     # Log initial message
     app_gui.log(f"Server started on port {HTTP_PORT}")
     app_gui.log(f"Loaded {len(gap_settings)} gap settings, {len(spike_settings)} spike settings")
+    app_gui.log(f"✨ Loaded {len(gap_config)} symbols from {GAP_CONFIG_FILE} (Point-based calculation)")
     app_gui.log("Waiting for data from MT4/MT5 EA...")
     
     # Run GUI main loop
