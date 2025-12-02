@@ -242,6 +242,10 @@ def load_gap_config_file():
 def find_symbol_config(symbol):
     """
     Tìm cấu hình cho symbol (matching với aliases, case-insensitive)
+    Hỗ trợ:
+    - Exact match (ưu tiên 1): So sánh chính xác 100%
+    - Prefix match (ưu tiên 2): Tìm alias là prefix của symbol
+      Ví dụ: BTCUSD.m, BTCUSD-spot, BTCUSD_futures đều match với BTCUSD
 
     Args:
         symbol: Symbol name to search
@@ -254,7 +258,7 @@ def find_symbol_config(symbol):
 
     symbol_lower = symbol.lower().strip()
 
-    # Lookup in reverse map (O(1) - very fast)
+    # Bước 1: Thử exact match (O(1) - very fast)
     symbol_chuan = gap_config_reverse_map.get(symbol_lower)
 
     if symbol_chuan:
@@ -267,6 +271,25 @@ def find_symbol_config(symbol):
             matched_alias = symbol  # Matched via alias
 
         return symbol_chuan, config, matched_alias
+
+    # Bước 2: Thử prefix match (O(n) where n = số aliases)
+    # Tìm alias dài nhất là prefix của symbol để tránh false positive
+    # Ví dụ: BTCUSDM nên match BTCUSD chứ không phải BTC
+    best_match = None
+    best_match_len = 0
+    best_alias = None
+
+    for alias_lower, symbol_chuan in gap_config_reverse_map.items():
+        if symbol_lower.startswith(alias_lower):
+            if len(alias_lower) > best_match_len:
+                best_match = symbol_chuan
+                best_match_len = len(alias_lower)
+                best_alias = alias_lower
+
+    if best_match:
+        config = gap_config[best_match]
+        # Return original symbol as matched_alias để hiển thị đúng
+        return best_match, config, symbol
 
     return None, None, None
 
