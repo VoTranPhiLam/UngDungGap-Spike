@@ -2582,8 +2582,9 @@ class GapSpikeDetectorGUI:
                   style='Accent.TButton').pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="Xóa cảnh báo", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
 
-        # Mute button
-        self.mute_button = ttk.Button(control_frame, text="🔇 Mute", command=self.toggle_mute)
+        # Mute button (using tk.Button for color support)
+        self.mute_button = tk.Button(control_frame, text="🔊 Unmute", command=self.toggle_mute,
+                                     font=('Arial', 9), relief=tk.RAISED, bd=2)
         self.mute_button.pack(side=tk.RIGHT, padx=5)
         self.update_mute_button()
         
@@ -3513,17 +3514,25 @@ class GapSpikeDetectorGUI:
             gap_detected = gap_info.get('detected', False)
             spike_detected = spike_info.get('detected', False)
 
-            # Get percentages (actual calculated values, not thresholds)
-            gap_percent = gap_info.get('percentage', 0)
-            spike_percent = spike_info.get('strength', 0)
+            # Apply filters
+            if self.filter_gap_only.get() and not gap_detected:
+                continue
+            if self.filter_spike_only.get() and not spike_detected:
+                continue
+
+            # Get CONFIGURED thresholds (not actual values)
+            gap_threshold = get_threshold_for_display(broker, symbol, 'gap')
+            spike_threshold = get_threshold_for_display(broker, symbol, 'spike')
 
             # Status
             status_parts = []
             if gap_detected:
                 gap_dir = gap_info.get('direction', 'none').upper()
-                status_parts.append(f"GAP {gap_dir}: {gap_percent:.3f}%")
+                gap_actual = gap_info.get('percentage', 0)
+                status_parts.append(f"GAP {gap_dir}: {gap_actual:.3f}%")
             if spike_detected:
-                status_parts.append(f"SPIKE: {spike_percent:.3f}%")
+                spike_actual = spike_info.get('strength', 0)
+                status_parts.append(f"SPIKE: {spike_actual:.3f}%")
             status = " | ".join(status_parts) if status_parts else "Normal"
 
             # Determine tag
@@ -3535,12 +3544,12 @@ class GapSpikeDetectorGUI:
             elif spike_detected:
                 tag = 'spike_detected'
 
-            # Insert row
+            # Insert row with CONFIGURED thresholds
             self.percent_tree.insert('', 'end', values=(
                 broker,
                 symbol,
-                f"{gap_percent:.3f}%",
-                f"{spike_percent:.3f}%",
+                f"{gap_threshold:.3f}",
+                f"{spike_threshold:.3f}",
                 status
             ), tags=(tag,))
 
@@ -3712,11 +3721,13 @@ class GapSpikeDetectorGUI:
         self.log(f"🔊 Đã {status} âm thanh")
 
     def update_mute_button(self):
-        """Update mute button text based on current state"""
+        """Update mute button text and color based on current state"""
         if audio_settings.get('enabled', True):
-            self.mute_button.config(text="🔊 Unmute")
+            # Enabled (có âm thanh) - màu xanh lá
+            self.mute_button.config(text="🔊 Unmute", bg='#90EE90', fg='black')
         else:
-            self.mute_button.config(text="🔇 Mute")
+            # Disabled (không có âm thanh) - màu đỏ
+            self.mute_button.config(text="🔇 Mute", bg='#FF6B6B', fg='white')
 
     def reset_python_connection(self):
         """Reset Python connection - manual trigger"""
