@@ -2673,15 +2673,22 @@ def receive_data():
                         'spike': spike_info
                     }
 
-                # Update Alert Board (Bảng Kèo) - chỉ khi có detection
+                # Update Alert Board (Bảng Kèo) - gọi khi có detection HOẶC đã có trong alert_board
+                # (để có thể xử lý grace period và xóa items đã hết alert)
                 if config_early:
                     # Point-based symbols
-                    if gap_spike_point_results[key]['gap']['detected'] or gap_spike_point_results[key]['spike']['detected']:
-                        update_alert_board(key, gap_spike_point_results[key])
+                    result = gap_spike_point_results[key]
+                    has_detection = result['gap']['detected'] or result['spike']['detected']
+                    # Gọi nếu có detection HOẶC đã có trong alert_board
+                    if has_detection or key in alert_board:
+                        update_alert_board(key, result)
                 else:
                     # Percent-based symbols
-                    if gap_spike_results[key]['gap']['detected'] or gap_spike_results[key]['spike']['detected']:
-                        update_alert_board(key, gap_spike_results[key])
+                    result = gap_spike_results[key]
+                    has_detection = result['gap']['detected'] or result['spike']['detected']
+                    # Gọi nếu có detection HOẶC đã có trong alert_board
+                    if has_detection or key in alert_board:
+                        update_alert_board(key, result)
 
         # 🔊 PHÁT ÂM THANH CẢnh báo cho toàn bộ bảng (sau khi xử lý tất cả symbols)
         # Check and play board alerts (not per-product, but for entire board)
