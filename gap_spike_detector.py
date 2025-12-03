@@ -68,6 +68,7 @@ alert_board = {}  # {broker_symbol: {data, last_detected_time, grace_period_star
 bid_tracking = {}  # {broker_symbol: {last_bid, last_change_time, first_seen_time}}
 candle_data = {}  # {broker_symbol: [(timestamp, open, high, low, close), ...]}
 manual_hidden_delays = {}  # {broker_symbol: True} - Manually hidden symbols
+hidden_alert_items = {}  # {broker_symbol: {'hidden_until': timestamp or None (permanent), 'reason': 'user_hide'}}
 
 # ⚡ OPTIMIZATION: Cache threshold lookups (TTL: 60 seconds)
 threshold_cache = {}  # {broker_symbol_type: (threshold_value, timestamp)}
@@ -931,9 +932,16 @@ def check_and_play_board_alert(alert_type):
                     has_items = True
                     break
         else:
-            # Check alert board for gap/spike
+            # Check alert board for gap/spike (exclude hidden items)
             for key, alert_info in alert_board.items():
                 result = alert_info.get('data', {})
+                broker = result.get('broker', '')
+                symbol = result.get('symbol', '')
+
+                # Skip hidden items
+                if is_alert_hidden(broker, symbol):
+                    continue
+
                 if alert_type == 'gap' and result.get('gap', {}).get('detected', False):
                     has_items = True
                     break
@@ -1597,6 +1605,105 @@ def save_market_open_settings():
         logger.info(f"Saved market open settings: only_check_open_market={market_open_settings['only_check_open_market']}")
     except Exception as e:
         logger.error(f"Error saving market open settings: {e}")
+
+def load_hidden_alert_items():
+    """Load hidden alert items from JSON file"""
+    global hidden_alert_items
+    try:
+        if os.path.exists('hidden_alert_items.json'):
+            with open('hidden_alert_items.json', 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+                # Clean up expired items
+                current_time = time.time()
+                hidden_alert_items = {
+                    key: value for key, value in loaded.items()
+                    if value.get('hidden_until') is None or value['hidden_until'] > current_time
+                }
+            logger.info(f"Loaded {len(hidden_alert_items)} hidden alert items")
+        else:
+            hidden_alert_items = {}
+    except Exception as e:
+        logger.error(f"Error loading hidden alert items: {e}")
+        hidden_alert_items = {}
+
+def save_hidden_alert_items():
+    """Save hidden alert items to JSON file"""
+    try:
+        with open('hidden_alert_items.json', 'w', encoding='utf-8') as f:
+            json.dump(hidden_alert_items, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved {len(hidden_alert_items)} hidden alert items")
+    except Exception as e:
+        logger.error(f"Error saving hidden alert items: {e}")
+
+def is_alert_hidden(broker, symbol):
+    """Check if an alert item is currently hidden"""
+    key = f"{broker}_{symbol}"
+    if key not in hidden_alert_items:
+        return False
+
+    hidden_info = hidden_alert_items[key]
+    hidden_until = hidden_info.get('hidden_until')
+
+    # Permanent hide
+    if hidden_until is None:
+        return True
+
+    # Temporary hide - check if expired
+    current_time = time.time()
+    if hidden_until > current_time:
+        return True
+    else:
+        # Expired - remove from hidden list
+        del hidden_alert_items[key]
+        save_hidden_alert_items()
+        return False
+
+def hide_alert_item(broker, symbol, duration_minutes=None):
+    """
+    Hide an alert item for a specified duration or permanently
+
+    Args:
+        broker: Broker name
+        symbol: Symbol name
+        duration_minutes: Duration in minutes, or None for permanent hide
+    """
+    key = f"{broker}_{symbol}"
+
+    if duration_minutes is None:
+        # Permanent hide
+        hidden_alert_items[key] = {
+            'hidden_until': None,
+            'reason': 'user_hide_permanent',
+            'hidden_at': time.time()
+        }
+        logger.info(f"Permanently hidden alert: {broker} {symbol}")
+    else:
+        # Temporary hide
+        hidden_until = time.time() + (duration_minutes * 60)
+        hidden_alert_items[key] = {
+            'hidden_until': hidden_until,
+            'reason': 'user_hide_temporary',
+            'hidden_at': time.time(),
+            'duration_minutes': duration_minutes
+        }
+        logger.info(f"Hidden alert for {duration_minutes} minutes: {broker} {symbol}")
+
+    save_hidden_alert_items()
+
+    # Remove from alert board if present
+    if key in alert_board:
+        del alert_board[key]
+        logger.info(f"Removed {key} from alert board")
+
+def unhide_alert_item(broker, symbol):
+    """Unhide an alert item"""
+    key = f"{broker}_{symbol}"
+    if key in hidden_alert_items:
+        del hidden_alert_items[key]
+        save_hidden_alert_items()
+        logger.info(f"Unhidden alert: {broker} {symbol}")
+        return True
+    return False
 
 # ===================== SCREENSHOT MANAGEMENT =====================
 def ensure_pictures_folder():
@@ -2690,6 +2797,7 @@ class GapSpikeDetectorGUI:
         ttk.Button(control_frame, text="Kết nối", command=self.open_connected_brokers).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="🔄 Khởi động lại Python", command=self.reset_python_connection,
                   style='Accent.TButton').pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="🔒 Hidden Alerts", command=self.open_hidden_alerts_window).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="Xóa cảnh báo", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
 
         # Mute button (using tk.Button for color support)
@@ -2793,23 +2901,27 @@ class GapSpikeDetectorGUI:
         ttk.Label(alert_control_frame, text="phút sau khi sản phẩm mở cửa không xét gap/spike (0 = tắt)").pack(side=tk.LEFT, padx=2)
         
         # Create Treeview for alerts
-        alert_columns = ('Broker', 'Symbol', 'Price', 'Gap %', 'Spike %', 'Alert Type', 'Time', 'Grace')
+        alert_columns = ('Broker', 'Symbol', 'Price', 'Gap %', 'Gap Threshold', 'Spike %', 'Spike Threshold', 'Alert Type', 'Time', 'Grace')
         self.alert_tree = ttk.Treeview(alert_frame, columns=alert_columns, show='headings', height=5)
-        
+
         self.alert_tree.heading('Broker', text='Broker')
         self.alert_tree.heading('Symbol', text='Symbol')
         self.alert_tree.heading('Price', text='Price')
         self.alert_tree.heading('Gap %', text='Gap %')
+        self.alert_tree.heading('Gap Threshold', text='Gap Ngưỡng')
         self.alert_tree.heading('Spike %', text='Spike %')
+        self.alert_tree.heading('Spike Threshold', text='Spike Ngưỡng')
         self.alert_tree.heading('Alert Type', text='Loại cảnh báo')
         self.alert_tree.heading('Time', text='Thời gian')
         self.alert_tree.heading('Grace', text='Thời gian chờ')
-        
+
         self.alert_tree.column('Broker', width=120)
         self.alert_tree.column('Symbol', width=100)
         self.alert_tree.column('Price', width=100)
         self.alert_tree.column('Gap %', width=80)
+        self.alert_tree.column('Gap Threshold', width=90)
         self.alert_tree.column('Spike %', width=80)
+        self.alert_tree.column('Spike Threshold', width=90)
         self.alert_tree.column('Alert Type', width=120)
         self.alert_tree.column('Time', width=80)
         self.alert_tree.column('Grace', width=100)
@@ -2826,9 +2938,12 @@ class GapSpikeDetectorGUI:
         self.alert_tree.tag_configure('spike', background='#ccffcc')
         self.alert_tree.tag_configure('both', background='#ffffcc')
         self.alert_tree.tag_configure('grace', background='#e0e0e0')
-        
+
         # Bind double-click to open chart
         self.alert_tree.bind('<Double-Button-1>', self.on_alert_double_click)
+
+        # Bind right-click for context menu
+        self.alert_tree.bind('<Button-3>', self.show_alert_context_menu)
 
         # ===================== PROGRESS BAR (Loading State) =====================
         self.progress_frame = ttk.Frame(self.root)
@@ -3430,16 +3545,26 @@ class GapSpikeDetectorGUI:
         # Clear existing alert items
         for item in self.alert_tree.get_children():
             self.alert_tree.delete(item)
-        
+
         current_time = time.time()
-        
+
         # Sort by broker name
         sorted_alerts = sorted(
             alert_board.items(),
             key=lambda x: (x[1]['data'].get('broker', ''), x[1]['data'].get('symbol', ''))
         )
-        
+
+        # Track hidden count
+        hidden_count = 0
+
         for key, alert_info in sorted_alerts:
+            # Check if alert is hidden
+            broker = alert_info['data'].get('broker', '')
+            symbol = alert_info['data'].get('symbol', '')
+
+            if is_alert_hidden(broker, symbol):
+                hidden_count += 1
+                continue  # Skip hidden items
             result = alert_info['data']
             grace_start = alert_info['grace_period_start']
             
@@ -3452,10 +3577,20 @@ class GapSpikeDetectorGUI:
             
             gap_detected = gap_info.get('detected', False)
             spike_detected = spike_info.get('detected', False)
-            
-            gap_pct = f"{gap_info.get('percentage', 0):.3f}%"
-            spike_pct = f"{spike_info.get('strength', 0):.3f}%"
-            
+
+            gap_pct = gap_info.get('percentage', 0)
+            spike_pct = spike_info.get('strength', 0)
+
+            # Get thresholds
+            gap_threshold = get_threshold(broker, symbol, 'gap')
+            spike_threshold = get_threshold(broker, symbol, 'spike')
+
+            # Format display
+            gap_pct_str = f"{gap_pct:.3f}%" if gap_detected else "-"
+            spike_pct_str = f"{spike_pct:.3f}%" if spike_detected else "-"
+            gap_threshold_str = f"{gap_threshold:.3f}%" if gap_detected else "-"
+            spike_threshold_str = f"{spike_threshold:.3f}%" if spike_detected else "-"
+
             # Determine alert type
             alert_type_parts = []
             if gap_detected:
@@ -3464,10 +3599,10 @@ class GapSpikeDetectorGUI:
             if spike_detected:
                 alert_type_parts.append("SPIKE")
             alert_type = " + ".join(alert_type_parts) if alert_type_parts else "Ending..."
-            
+
             # Time
             time_str = server_timestamp_to_datetime(timestamp).strftime('%H:%M:%S')
-            
+
             # Grace period
             if grace_start is not None:
                 elapsed = current_time - grace_start
@@ -3485,31 +3620,50 @@ class GapSpikeDetectorGUI:
                     tag = 'spike'
                 else:
                     tag = 'grace'
-            
+
             # Insert row
             self.alert_tree.insert('', 'end', values=(
                 broker,
                 symbol,
                 f"{price:.5f}",
-                gap_pct,
-                spike_pct,
+                gap_pct_str,
+                gap_threshold_str,
+                spike_pct_str,
+                spike_threshold_str,
                 alert_type,
                 time_str,
                 grace_str
             ), tags=(tag,))
         
         # If no alerts, show message
-        if not alert_board:
-            self.alert_tree.insert('', 'end', values=(
-                'Không có kèo',
-                '-',
-                '-',
-                '-',
-                '-',
-                'Chờ phát hiện Gap/Spike...',
-                '-',
-                '-'
-            ))
+        visible_count = len(sorted_alerts) - hidden_count
+        if visible_count == 0:
+            if hidden_count > 0:
+                self.alert_tree.insert('', 'end', values=(
+                    f'🔒 {hidden_count} alert(s) hidden',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    'Click "Hidden Alerts" button to view',
+                    '-',
+                    '-'
+                ))
+            else:
+                self.alert_tree.insert('', 'end', values=(
+                    'Không có kèo',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    'Chờ phát hiện Gap/Spike...',
+                    '-',
+                    '-'
+                ))
 
     def update_point_percent_tables(self):
         """
@@ -4048,6 +4202,10 @@ class GapSpikeDetectorGUI:
     def open_picture_gallery(self):
         """Mở cửa sổ Picture Gallery"""
         PictureGalleryWindow(self.root, self)
+
+    def open_hidden_alerts_window(self):
+        """Mở cửa sổ Hidden Alerts"""
+        HiddenAlertsWindow(self.root, self)
     
     def toggle_only_check_open_market(self):
         """Toggle setting: Only check gap/spike when market is open"""
@@ -4281,7 +4439,71 @@ class GapSpikeDetectorGUI:
             pass  # No selection
         except Exception as e:
             logger.error(f"Error opening chart from alert board: {e}")
-    
+
+    def show_alert_context_menu(self, event):
+        """Show context menu for alert board"""
+        try:
+            # Select item under cursor
+            item = self.alert_tree.identify_row(event.y)
+            if not item:
+                return
+
+            self.alert_tree.selection_set(item)
+            values = self.alert_tree.item(item, 'values')
+
+            if not values or len(values) < 2:
+                return
+
+            # Values: (Broker, Symbol, Price, Gap %, Gap Threshold, Spike %, Spike Threshold, Alert Type, Time, Grace)
+            broker = values[0]
+            symbol = values[1]
+
+            # Skip if it's a message row
+            if broker in ['Không có kèo', '🔒'] or symbol == '-':
+                return
+
+            # Create context menu
+            context_menu = tk.Menu(self.root, tearoff=0)
+
+            # Add Hide options
+            context_menu.add_command(
+                label=f"🔒 Hide {symbol} - 30 phút",
+                command=lambda: self.hide_alert_symbol(broker, symbol, 30)
+            )
+            context_menu.add_command(
+                label=f"🔒 Hide {symbol} - Vĩnh viễn",
+                command=lambda: self.hide_alert_symbol(broker, symbol, None)
+            )
+
+            context_menu.add_separator()
+            context_menu.add_command(
+                label=f"📈 Open Chart",
+                command=lambda: self.open_chart(broker, symbol)
+            )
+
+            context_menu.tk_popup(event.x_root, event.y_root)
+
+        except Exception as e:
+            logger.error(f"Error showing alert context menu: {e}")
+
+    def hide_alert_symbol(self, broker, symbol, duration_minutes):
+        """Hide symbol from alert board"""
+        try:
+            hide_alert_item(broker, symbol, duration_minutes)
+
+            if duration_minutes is None:
+                self.log(f"🔒 Hidden {symbol} ({broker}) vĩnh viễn from Alert board")
+            else:
+                self.log(f"🔒 Hidden {symbol} ({broker}) for {duration_minutes} minutes from Alert board")
+
+            logger.info(f"Hidden alert: {broker}_{symbol} (duration: {duration_minutes})")
+
+            # Update display
+            self.update_alert_board_display()
+
+        except Exception as e:
+            logger.error(f"Error hiding alert symbol: {e}")
+
     def show_delay_context_menu(self, event):
         """Show context menu for delay board"""
         try:
@@ -8137,6 +8359,207 @@ class ConnectedBrokersWindow:
             self.update_display()
             self.window.after(5000, self.auto_refresh)
 
+# ===================== HIDDEN ALERTS WINDOW =====================
+class HiddenAlertsWindow:
+    def __init__(self, parent, main_app):
+        self.main_app = main_app
+        self.window = tk.Toplevel(parent)
+        self.window.title("Hidden Alert Items")
+        self.window.geometry("900x500")
+
+        # Make window modal
+        self.window.transient(parent)
+        self.window.grab_set()
+
+        self.window.lift()
+        self.window.focus_force()
+
+        # Top Frame
+        top_frame = ttk.Frame(self.window, padding="10")
+        top_frame.pack(fill=tk.X)
+
+        ttk.Label(top_frame, text="🔒 Hidden Alert Items", font=('Arial', 14, 'bold')).pack(side=tk.LEFT, padx=10)
+
+        # Refresh button
+        ttk.Button(top_frame, text="🔄 Refresh", command=self.update_display).pack(side=tk.LEFT, padx=5)
+
+        # Unhide All button
+        ttk.Button(top_frame, text="🔓 Unhide All", command=self.unhide_all).pack(side=tk.LEFT, padx=5)
+
+        # Main Table Frame
+        table_frame = ttk.LabelFrame(self.window, text="Hidden Alert Items", padding="10")
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Create Treeview
+        columns = ('Broker', 'Symbol', 'Hidden At', 'Expires At', 'Type')
+        self.tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
+
+        self.tree.heading('Broker', text='Broker')
+        self.tree.heading('Symbol', text='Symbol')
+        self.tree.heading('Hidden At', text='Hidden At')
+        self.tree.heading('Expires At', text='Expires At')
+        self.tree.heading('Type', text='Type')
+
+        self.tree.column('Broker', width=200)
+        self.tree.column('Symbol', width=120)
+        self.tree.column('Hidden At', width=180)
+        self.tree.column('Expires At', width=180)
+        self.tree.column('Type', width=120)
+
+        # Scrollbar
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Tags
+        self.tree.tag_configure('permanent', background='#ffcccc')
+        self.tree.tag_configure('temporary', background='#fff4cc')
+
+        # Bind right-click for context menu
+        self.tree.bind('<Button-3>', self.show_context_menu)
+
+        # Initial display
+        self.update_display()
+
+        # Auto-refresh every 5 seconds
+        self.auto_refresh()
+
+    def update_display(self):
+        """Update display of hidden items"""
+        try:
+            # Clear existing items
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            current_time = time.time()
+
+            # Sort by broker and symbol
+            sorted_items = sorted(hidden_alert_items.items(), key=lambda x: x[0])
+
+            for key, hidden_info in sorted_items:
+                # Parse key
+                parts = key.split('_', 1)
+                if len(parts) != 2:
+                    continue
+
+                broker, symbol = parts
+
+                hidden_at = hidden_info.get('hidden_at', 0)
+                hidden_until = hidden_info.get('hidden_until')
+
+                # Format times
+                hidden_at_str = datetime.fromtimestamp(hidden_at).strftime('%Y-%m-%d %H:%M:%S') if hidden_at else '-'
+
+                if hidden_until is None:
+                    expires_at_str = 'Vĩnh viễn'
+                    type_str = 'Permanent'
+                    tag = 'permanent'
+                else:
+                    expires_at_str = datetime.fromtimestamp(hidden_until).strftime('%Y-%m-%d %H:%M:%S')
+                    remaining_seconds = max(0, hidden_until - current_time)
+                    remaining_minutes = int(remaining_seconds / 60)
+                    type_str = f'Temporary ({remaining_minutes}m left)'
+                    tag = 'temporary'
+
+                # Insert row
+                self.tree.insert('', 'end', values=(
+                    broker,
+                    symbol,
+                    hidden_at_str,
+                    expires_at_str,
+                    type_str
+                ), tags=(tag,))
+
+            # If no hidden items
+            if not hidden_alert_items:
+                self.tree.insert('', 'end', values=(
+                    'Không có alert nào bị ẩn',
+                    '-',
+                    '-',
+                    '-',
+                    '-'
+                ))
+
+        except Exception as e:
+            logger.error(f"Error updating hidden alerts display: {e}")
+
+    def show_context_menu(self, event):
+        """Show context menu for hidden items"""
+        try:
+            # Select item under cursor
+            item = self.tree.identify_row(event.y)
+            if not item:
+                return
+
+            self.tree.selection_set(item)
+            values = self.tree.item(item, 'values')
+
+            if not values or len(values) < 2:
+                return
+
+            broker = values[0]
+            symbol = values[1]
+
+            # Skip if it's a message row
+            if broker == 'Không có alert nào bị ẩn' or symbol == '-':
+                return
+
+            # Create context menu
+            context_menu = tk.Menu(self.window, tearoff=0)
+
+            context_menu.add_command(
+                label=f"🔓 Unhide {symbol}",
+                command=lambda: self.unhide_item(broker, symbol)
+            )
+
+            context_menu.tk_popup(event.x_root, event.y_root)
+
+        except Exception as e:
+            logger.error(f"Error showing context menu: {e}")
+
+    def unhide_item(self, broker, symbol):
+        """Unhide a specific item"""
+        try:
+            if unhide_alert_item(broker, symbol):
+                self.main_app.log(f"🔓 Unhidden {symbol} ({broker})")
+                self.update_display()
+                # Update main alert board display
+                self.main_app.update_alert_board_display()
+        except Exception as e:
+            logger.error(f"Error unhiding item: {e}")
+
+    def unhide_all(self):
+        """Unhide all items"""
+        try:
+            count = len(hidden_alert_items)
+            if count == 0:
+                messagebox.showinfo("Info", "No hidden alert items")
+                return
+
+            result = messagebox.askyesno(
+                "Confirm",
+                f"Unhide all {count} hidden alert items?"
+            )
+
+            if result:
+                hidden_alert_items.clear()
+                save_hidden_alert_items()
+                self.main_app.log(f"🔓 Unhidden all {count} alert items")
+                self.update_display()
+                # Update main alert board display
+                self.main_app.update_alert_board_display()
+
+        except Exception as e:
+            logger.error(f"Error unhiding all: {e}")
+
+    def auto_refresh(self):
+        """Auto refresh every 5 seconds"""
+        if self.window.winfo_exists():
+            self.update_display()
+            self.window.after(5000, self.auto_refresh)
+
 # ===================== TRADING HOURS WINDOW =====================
 class TradingHoursWindow:
     def __init__(self, parent, main_app):
@@ -8409,6 +8832,7 @@ def main():
     load_market_open_settings()
     load_auto_send_settings()
     load_python_reset_settings()
+    load_hidden_alert_items()
 
     # Load gap/spike config from file (Point-based calculation)
     load_gap_config_file()
