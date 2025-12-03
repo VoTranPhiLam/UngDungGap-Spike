@@ -59,6 +59,10 @@ spike_settings = {}  # {symbol: threshold%} or {broker_symbol: threshold%}
 
 DEFAULT_GAP_THRESHOLD = 0.3
 DEFAULT_SPIKE_THRESHOLD = 1.3
+
+# Custom thresholds (user-defined overrides)
+# Format: {broker_symbol: {'gap_point': float, 'gap_percent': float, 'spike_percent': float}}
+custom_thresholds = {}
 gap_spike_results = {}  # {broker_symbol: {gap_info, spike_info}}
 alert_board = {}  # {broker_symbol: {data, last_detected_time, grace_period_start}}
 bid_tracking = {}  # {broker_symbol: {last_bid, last_change_time, first_seen_time}}
@@ -1033,6 +1037,38 @@ def save_manual_hidden_delays():
         logger.info(f"Saved {len(manual_hidden_delays)} manual hidden delays")
     except Exception as e:
         logger.error(f"Error saving manual hidden delays: {e}")
+
+def load_custom_thresholds():
+    """Load custom thresholds from JSON file and apply to gap/spike settings"""
+    global custom_thresholds, gap_settings, spike_settings
+    try:
+        if os.path.exists('custom_thresholds.json'):
+            with open('custom_thresholds.json', 'r', encoding='utf-8') as f:
+                custom_thresholds = json.load(f)
+            logger.info(f"Loaded {len(custom_thresholds)} custom thresholds")
+
+            # Apply custom thresholds to gap_settings and spike_settings
+            for broker_symbol, thresholds in custom_thresholds.items():
+                if 'gap_percent' in thresholds:
+                    gap_settings[broker_symbol] = thresholds['gap_percent']
+                if 'spike_percent' in thresholds:
+                    spike_settings[broker_symbol] = thresholds['spike_percent']
+
+            logger.info(f"Applied custom thresholds to gap_settings and spike_settings")
+        else:
+            custom_thresholds = {}
+    except Exception as e:
+        logger.error(f"Error loading custom thresholds: {e}")
+        custom_thresholds = {}
+
+def save_custom_thresholds():
+    """Save custom thresholds to JSON file"""
+    try:
+        with open('custom_thresholds.json', 'w', encoding='utf-8') as f:
+            json.dump(custom_thresholds, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved {len(custom_thresholds)} custom thresholds")
+    except Exception as e:
+        logger.error(f"Error saving custom thresholds: {e}")
 
 def load_symbol_filter_settings():
     """Load symbol filter settings from JSON file"""
@@ -2494,7 +2530,13 @@ class GapSpikeDetectorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Gap & Spike Detector v2.14.0 - MT4/MT5")
-        self.root.geometry("1400x800")
+        # Set window to maximized/fullscreen
+        self.root.state('zoomed')  # Maximize window (works on Windows)
+        # For Linux, try both methods
+        try:
+            self.root.attributes('-zoomed', True)
+        except:
+            pass
         
         # Configure styles
         style = ttk.Style()
@@ -2508,6 +2550,7 @@ class GapSpikeDetectorGUI:
         self.auto_scroll = tk.BooleanVar(value=True)
         self.delay_threshold = tk.IntVar(value=delay_settings['threshold'])  # Load from settings
         self.python_reset_job = None
+        self.is_muted = tk.BooleanVar(value=not audio_settings.get('enabled', True))
         
         self.setup_ui()
         self.update_display()
@@ -2538,6 +2581,11 @@ class GapSpikeDetectorGUI:
         ttk.Button(control_frame, text="🔄 Khởi động lại Python", command=self.reset_python_connection,
                   style='Accent.TButton').pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="Xóa cảnh báo", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
+
+        # Mute button
+        self.mute_button = ttk.Button(control_frame, text="🔇 Mute", command=self.toggle_mute)
+        self.mute_button.pack(side=tk.RIGHT, padx=5)
+        self.update_mute_button()
         
         # Connection Status Warning Frame
         self.connection_warning_frame = ttk.Frame(self.root)
@@ -3374,6 +3422,7 @@ class GapSpikeDetectorGUI:
         for key, result in sorted_point_results:
             symbol = result.get('symbol', '')
             broker = result.get('broker', '')
+            broker_symbol = f"{broker}_{symbol}"
             symbol_chuan = result.get('symbol_chuan', '')
             matched_alias = result.get('matched_alias', '')
             gap_info = result.get('gap', {})
@@ -3387,6 +3436,11 @@ class GapSpikeDetectorGUI:
             threshold_point = gap_info.get('threshold_point', 0)
             point_gap = gap_info.get('point_gap', 0)
             spike_point = spike_info.get('spike_point', 0)
+
+            # Apply custom threshold if exists
+            if broker_symbol in custom_thresholds:
+                if 'gap_point' in custom_thresholds[broker_symbol]:
+                    threshold_point = custom_thresholds[broker_symbol]['gap_point']
 
             # Status
             status_parts = []
@@ -3447,6 +3501,7 @@ class GapSpikeDetectorGUI:
         for key, result in sorted_percent_results:
             symbol = result.get('symbol', '')
             broker = result.get('broker', '')
+            broker_symbol = f"{broker}_{symbol}"
 
             # Skip if this symbol is in point-based results
             if key in gap_spike_point_results:
@@ -3458,7 +3513,7 @@ class GapSpikeDetectorGUI:
             gap_detected = gap_info.get('detected', False)
             spike_detected = spike_info.get('detected', False)
 
-            # Get percentages
+            # Get percentages (actual calculated values, not thresholds)
             gap_percent = gap_info.get('percentage', 0)
             spike_percent = spike_info.get('strength', 0)
 
@@ -3513,11 +3568,42 @@ class GapSpikeDetectorGUI:
     def on_point_symbol_double_click(self, event):
         """Handle double-click on Point-based table"""
         try:
+            # Get clicked item and column
             item = self.point_tree.selection()[0]
+            region = self.point_tree.identify_region(event.x, event.y)
+
+            if region != "cell":
+                return
+
+            column = self.point_tree.identify_column(event.x)
+            column_index = int(column.replace('#', '')) - 1
+
             values = self.point_tree.item(item, 'values')
             broker = values[0]
             symbol = values[1]
-            self.open_chart_window(broker, symbol)
+            broker_symbol = f"{broker}_{symbol}"
+
+            # Column 4 is 'Threshold (Point)' - allow editing
+            if column_index == 4:
+                current_value = values[4]
+                new_value = simpledialog.askfloat(
+                    "Chỉnh sửa ngưỡng Point",
+                    f"Nhập ngưỡng Point mới cho {broker_symbol}:\n(Hiện tại: {current_value})",
+                    initialvalue=float(current_value) if current_value else 0.0
+                )
+
+                if new_value is not None:
+                    # Save to custom thresholds
+                    if broker_symbol not in custom_thresholds:
+                        custom_thresholds[broker_symbol] = {}
+                    custom_thresholds[broker_symbol]['gap_point'] = new_value
+                    save_custom_thresholds()
+
+                    self.log(f"✅ Đã cập nhật ngưỡng Point cho {broker_symbol}: {new_value}")
+                    self.update_display()
+            else:
+                # Click on other columns - open chart window
+                self.open_chart_window(broker, symbol)
         except IndexError:
             pass
         except Exception as e:
@@ -3526,11 +3612,80 @@ class GapSpikeDetectorGUI:
     def on_percent_symbol_double_click(self, event):
         """Handle double-click on Percent-based table"""
         try:
+            # Get clicked item and column
             item = self.percent_tree.selection()[0]
+            region = self.percent_tree.identify_region(event.x, event.y)
+
+            if region != "cell":
+                return
+
+            column = self.percent_tree.identify_column(event.x)
+            column_index = int(column.replace('#', '')) - 1
+
             values = self.percent_tree.item(item, 'values')
             broker = values[0]
             symbol = values[1]
-            self.open_chart_window(broker, symbol)
+            broker_symbol = f"{broker}_{symbol}"
+
+            # Column 2 is 'Gap %', Column 3 is 'Spike %' - allow editing
+            if column_index == 2:
+                # Edit Gap %
+                # Get current threshold (not the displayed calculated value)
+                if broker_symbol in custom_thresholds and 'gap_percent' in custom_thresholds[broker_symbol]:
+                    current_threshold = custom_thresholds[broker_symbol]['gap_percent']
+                else:
+                    current_threshold = get_threshold_for_display(broker, symbol, 'gap')
+
+                new_value = simpledialog.askfloat(
+                    "Chỉnh sửa ngưỡng Gap %",
+                    f"Nhập ngưỡng Gap % mới cho {broker_symbol}:\n(Ngưỡng hiện tại: {current_threshold}%)",
+                    initialvalue=current_threshold
+                )
+
+                if new_value is not None:
+                    # Save to gap_settings
+                    gap_settings[broker_symbol] = new_value
+                    save_gap_settings()
+
+                    # Also save to custom thresholds for persistence
+                    if broker_symbol not in custom_thresholds:
+                        custom_thresholds[broker_symbol] = {}
+                    custom_thresholds[broker_symbol]['gap_percent'] = new_value
+                    save_custom_thresholds()
+
+                    self.log(f"✅ Đã cập nhật ngưỡng Gap % cho {broker_symbol}: {new_value}%")
+                    self.update_display()
+
+            elif column_index == 3:
+                # Edit Spike %
+                # Get current threshold (not the displayed calculated value)
+                if broker_symbol in custom_thresholds and 'spike_percent' in custom_thresholds[broker_symbol]:
+                    current_threshold = custom_thresholds[broker_symbol]['spike_percent']
+                else:
+                    current_threshold = get_threshold_for_display(broker, symbol, 'spike')
+
+                new_value = simpledialog.askfloat(
+                    "Chỉnh sửa ngưỡng Spike %",
+                    f"Nhập ngưỡng Spike % mới cho {broker_symbol}:\n(Ngưỡng hiện tại: {current_threshold}%)",
+                    initialvalue=current_threshold
+                )
+
+                if new_value is not None:
+                    # Save to spike_settings
+                    spike_settings[broker_symbol] = new_value
+                    save_spike_settings()
+
+                    # Also save to custom thresholds for persistence
+                    if broker_symbol not in custom_thresholds:
+                        custom_thresholds[broker_symbol] = {}
+                    custom_thresholds[broker_symbol]['spike_percent'] = new_value
+                    save_custom_thresholds()
+
+                    self.log(f"✅ Đã cập nhật ngưỡng Spike % cho {broker_symbol}: {new_value}%")
+                    self.update_display()
+            else:
+                # Click on other columns - open chart window
+                self.open_chart_window(broker, symbol)
         except IndexError:
             pass
         except Exception as e:
@@ -3542,7 +3697,27 @@ class GapSpikeDetectorGUI:
             gap_spike_results.clear()
             alert_board.clear()
         self.log("Đã xóa tất cả alerts và bảng kèo")
-    
+
+    def toggle_mute(self):
+        """Toggle mute/unmute audio"""
+        global audio_settings
+        current_state = audio_settings.get('enabled', True)
+        new_state = not current_state
+        audio_settings['enabled'] = new_state
+        self.is_muted.set(not new_state)
+        save_audio_settings()
+        self.update_mute_button()
+
+        status = "BẬT" if new_state else "TẮT"
+        self.log(f"🔊 Đã {status} âm thanh")
+
+    def update_mute_button(self):
+        """Update mute button text based on current state"""
+        if audio_settings.get('enabled', True):
+            self.mute_button.config(text="🔊 Unmute")
+        else:
+            self.mute_button.config(text="🔇 Mute")
+
     def reset_python_connection(self):
         """Reset Python connection - manual trigger"""
         self.perform_python_reset(
@@ -8116,6 +8291,9 @@ def main():
 
     # Load gap/spike config from file (Point-based calculation)
     load_gap_config_file()
+
+    # Load custom user-defined thresholds
+    load_custom_thresholds()
 
     # Ensure pictures folder exists
     ensure_pictures_folder()
