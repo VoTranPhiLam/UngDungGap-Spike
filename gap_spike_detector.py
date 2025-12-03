@@ -2693,7 +2693,7 @@ class GapSpikeDetectorGUI:
         ttk.Button(control_frame, text="Xóa cảnh báo", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
 
         # Mute button (using tk.Button for color support)
-        self.mute_button = tk.Button(control_frame, text="🔊 Unmute", command=self.toggle_mute,
+        self.mute_button = tk.Button(control_frame, text="🔊 Mute", command=self.toggle_mute,
                                      font=('Arial', 9), relief=tk.RAISED, bd=2)
         self.mute_button.pack(side=tk.RIGHT, padx=5)
         self.update_mute_button()
@@ -3833,11 +3833,11 @@ class GapSpikeDetectorGUI:
     def update_mute_button(self):
         """Update mute button text and color based on current state"""
         if audio_settings.get('enabled', True):
-            # Enabled (có âm thanh) - màu xanh lá
-            self.mute_button.config(text="🔊 Unmute", bg='#90EE90', fg='black')
+            # Enabled (có âm thanh) - màu xanh lá, hiển thị Mute (bấm để tắt)
+            self.mute_button.config(text="🔊 Mute", bg='#90EE90', fg='black')
         else:
-            # Disabled (không có âm thanh) - màu đỏ
-            self.mute_button.config(text="🔇 Mute", bg='#FF6B6B', fg='white')
+            # Disabled (không có âm thanh) - màu đỏ, hiển thị Unmute (bấm để bật)
+            self.mute_button.config(text="🔇 Unmute", bg='#FF6B6B', fg='white')
 
     def reset_python_connection(self):
         """Reset Python connection - manual trigger"""
