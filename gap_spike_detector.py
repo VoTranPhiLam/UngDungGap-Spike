@@ -158,6 +158,116 @@ SHEET_ID_CACHE_FILE = "sheet_id_cache.json"  # Cache sheet ID to reuse (avoid cr
 
 data_lock = threading.Lock()
 
+# ===================== OPTIMIZED FILE WRITING =====================
+# Debouncing và background write queue để giảm số lần ghi file
+# Chỉ ghi file sau 2 giây kể từ lần chỉnh sửa cuối cùng
+pending_writes = {
+    'gap_settings': False,
+    'spike_settings': False,
+    'custom_thresholds': False,
+    'audio_settings': False,
+    'delay_settings': False,
+    'screenshot_settings': False,
+    'symbol_filter_settings': False,
+    'manual_hidden_delays': False,
+    'market_open_settings': False,
+    'auto_send_settings': False,
+    'python_reset_settings': False,
+}
+write_timer = None
+write_lock = threading.Lock()
+WRITE_DEBOUNCE_DELAY = 2.0  # Đợi 2 giây sau lần thay đổi cuối cùng trước khi ghi file
+
+def schedule_save(setting_type):
+    """
+    Lên lịch ghi file với debouncing.
+    Đợi WRITE_DEBOUNCE_DELAY giây sau lần thay đổi cuối cùng trước khi ghi.
+    Điều này tránh ghi file quá nhiều khi user chỉnh sửa nhanh liên tục.
+    """
+    global write_timer, pending_writes
+
+    with write_lock:
+        # Đánh dấu setting type này cần ghi
+        if setting_type in pending_writes:
+            pending_writes[setting_type] = True
+        else:
+            logger.warning(f"Unknown setting type for scheduled save: {setting_type}")
+            return
+
+        # Hủy timer cũ nếu có
+        if write_timer:
+            write_timer.cancel()
+
+        # Tạo timer mới - sẽ thực thi sau WRITE_DEBOUNCE_DELAY giây
+        write_timer = threading.Timer(WRITE_DEBOUNCE_DELAY, perform_pending_writes)
+        write_timer.daemon = True
+        write_timer.start()
+
+        logger.debug(f"Scheduled save for {setting_type} (will execute in {WRITE_DEBOUNCE_DELAY}s)")
+
+def perform_pending_writes():
+    """
+    Thực thi tất cả các thao tác ghi file đang pending trong background thread.
+    Hàm này được gọi bởi debounce timer.
+    """
+    global pending_writes, write_timer
+
+    # Lấy danh sách settings cần lưu
+    with write_lock:
+        to_save = [k for k, v in pending_writes.items() if v]
+        # Reset pending flags
+        for key in to_save:
+            pending_writes[key] = False
+        write_timer = None
+
+    if not to_save:
+        return
+
+    # Thực hiện ghi file trong background (không block UI)
+    start_time = time.time()
+    saved_count = 0
+
+    for setting_type in to_save:
+        try:
+            if setting_type == 'gap_settings':
+                save_gap_settings()
+                saved_count += 1
+            elif setting_type == 'spike_settings':
+                save_spike_settings()
+                saved_count += 1
+            elif setting_type == 'custom_thresholds':
+                save_custom_thresholds()
+                saved_count += 1
+            elif setting_type == 'audio_settings':
+                save_audio_settings()
+                saved_count += 1
+            elif setting_type == 'delay_settings':
+                save_delay_settings()
+                saved_count += 1
+            elif setting_type == 'screenshot_settings':
+                save_screenshot_settings()
+                saved_count += 1
+            elif setting_type == 'symbol_filter_settings':
+                save_symbol_filter_settings()
+                saved_count += 1
+            elif setting_type == 'manual_hidden_delays':
+                save_manual_hidden_delays()
+                saved_count += 1
+            elif setting_type == 'market_open_settings':
+                save_market_open_settings()
+                saved_count += 1
+            elif setting_type == 'auto_send_settings':
+                save_auto_send_settings()
+                saved_count += 1
+            elif setting_type == 'python_reset_settings':
+                save_python_reset_settings()
+                saved_count += 1
+        except Exception as e:
+            logger.error(f"Error saving {setting_type}: {e}")
+
+    elapsed = time.time() - start_time
+    logger.info(f"✅ Background write completed: {saved_count} file(s) saved in {elapsed:.3f}s - {to_save}")
+
 # ===================== GAP/SPIKE CONFIG FROM FILE =====================
 # Cấu hình Gap/Spike từ file THAM_SO_GAP_INDICATOR.txt
 gap_config = {}  # {symbol_chuan: {aliases: [...], default_gap_percent: float, custom_gap: int}}
@@ -3606,7 +3716,7 @@ class GapSpikeDetectorGUI:
                     if broker_symbol not in custom_thresholds:
                         custom_thresholds[broker_symbol] = {}
                     custom_thresholds[broker_symbol]['gap_point'] = new_value
-                    save_custom_thresholds()
+                    schedule_save('custom_thresholds')
 
                     self.log(f"✅ Đã cập nhật ngưỡng Point cho {broker_symbol}: {new_value}")
                     self.update_display()
@@ -3654,13 +3764,13 @@ class GapSpikeDetectorGUI:
                 if new_value is not None:
                     # Save to gap_settings
                     gap_settings[broker_symbol] = new_value
-                    save_gap_settings()
+                    schedule_save('gap_settings')
 
                     # Also save to custom thresholds for persistence
                     if broker_symbol not in custom_thresholds:
                         custom_thresholds[broker_symbol] = {}
                     custom_thresholds[broker_symbol]['gap_percent'] = new_value
-                    save_custom_thresholds()
+                    schedule_save('custom_thresholds')
 
                     self.log(f"✅ Đã cập nhật ngưỡng Gap % cho {broker_symbol}: {new_value}%")
                     self.update_display()
@@ -3682,13 +3792,13 @@ class GapSpikeDetectorGUI:
                 if new_value is not None:
                     # Save to spike_settings
                     spike_settings[broker_symbol] = new_value
-                    save_spike_settings()
+                    schedule_save('spike_settings')
 
                     # Also save to custom thresholds for persistence
                     if broker_symbol not in custom_thresholds:
                         custom_thresholds[broker_symbol] = {}
                     custom_thresholds[broker_symbol]['spike_percent'] = new_value
-                    save_custom_thresholds()
+                    schedule_save('custom_thresholds')
 
                     self.log(f"✅ Đã cập nhật ngưỡng Spike % cho {broker_symbol}: {new_value}%")
                     self.update_display()
@@ -3714,7 +3824,7 @@ class GapSpikeDetectorGUI:
         new_state = not current_state
         audio_settings['enabled'] = new_state
         self.is_muted.set(not new_state)
-        save_audio_settings()
+        schedule_save('audio_settings')
         self.update_mute_button()
 
         status = "BẬT" if new_state else "TẮT"
@@ -3945,8 +4055,8 @@ class GapSpikeDetectorGUI:
             new_value = self.only_check_open_var.get()
             with data_lock:
                 market_open_settings['only_check_open_market'] = new_value
-                save_market_open_settings()
-            
+                schedule_save('market_open_settings')
+
             status = "BẬT" if new_value else "TẮT"
             logger.info(f"Only check open market: {status}")
             messagebox.showinfo(
@@ -3964,8 +4074,8 @@ class GapSpikeDetectorGUI:
             skip_minutes = self.skip_minutes_var.get()
             with data_lock:
                 market_open_settings['skip_minutes_after_open'] = skip_minutes
-                save_market_open_settings()
-            
+                schedule_save('market_open_settings')
+
             logger.info(f"Skip minutes after market open: {skip_minutes}")
             if skip_minutes > 0:
                 messagebox.showinfo(
@@ -4054,9 +4164,9 @@ class GapSpikeDetectorGUI:
 
                     # Lưu ra file
                     if threshold_type == 'gap':
-                        save_gap_settings()
+                        schedule_save('gap_settings')
                     else:
-                        save_spike_settings()
+                        schedule_save('spike_settings')
 
                     # Cập nhật cell hiển thị
                     updated_threshold = get_threshold_for_display(broker, symbol, threshold_type)
@@ -4094,9 +4204,9 @@ class GapSpikeDetectorGUI:
 
                     # Lưu ra file
                     if threshold_type == 'gap':
-                        save_gap_settings()
+                        schedule_save('gap_settings')
                     else:
-                        save_spike_settings()
+                        schedule_save('spike_settings')
 
                     # Cập nhật cell hiển thị
                     updated_threshold = self.get_threshold_for_display(broker, symbol, threshold_type)
@@ -5292,7 +5402,7 @@ class SettingsWindow:
                     payload[broker] = sorted(symbols)
 
             symbol_filter_settings['selection'] = payload
-            save_symbol_filter_settings()
+            schedule_save('symbol_filter_settings')
 
             cleanup_unselected_symbol_results()
 
@@ -5411,7 +5521,7 @@ class SettingsWindow:
             screenshot_settings['folder'] = self.screenshot_folder_var.get()
             screenshot_settings['startup_delay_minutes'] = self.screenshot_startup_delay_var.get()
 
-            save_screenshot_settings()
+            schedule_save('screenshot_settings')
             ensure_pictures_folder()
 
             messagebox.showinfo("Success",
@@ -5675,7 +5785,7 @@ class SettingsWindow:
             columns_config['type'] = self.col_type_var.get()
             columns_config['percentage'] = self.col_percentage_var.get()
 
-            save_auto_send_settings()
+            schedule_save('auto_send_settings')
 
             sheet_url_display = sheet_url
             if len(sheet_url_display) > 50:
@@ -5708,7 +5818,7 @@ class SettingsWindow:
                 interval = 30
             python_reset_settings['enabled'] = self.python_reset_enabled_var.get()
             python_reset_settings['interval_minutes'] = interval
-            save_python_reset_settings()
+            schedule_save('python_reset_settings')
             self.main_app.update_python_reset_schedule()
             
             status = "BẬT" if python_reset_settings['enabled'] else "TẮT"
@@ -5788,9 +5898,9 @@ class SettingsWindow:
         try:
             delay_settings['threshold'] = self.delay_threshold_var.get()
             delay_settings['auto_hide_time'] = self.auto_hide_time_var.get()
-            
-            save_delay_settings()
-            
+
+            schedule_save('delay_settings')
+
             # Update main app
             self.main_app.delay_threshold.set(delay_settings['threshold'])
             
@@ -7495,7 +7605,7 @@ class PictureGalleryWindow:
         try:
             selected_name = self.assigned_name_var.get()
             screenshot_settings['assigned_name'] = selected_name
-            save_screenshot_settings()
+            schedule_save('screenshot_settings')
             logger.info(f"Updated Picture Gallery assignee: {selected_name}")
         except Exception as e:
             logger.error(f"Error saving assigned name: {e}")
