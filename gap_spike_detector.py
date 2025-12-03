@@ -5774,52 +5774,117 @@ class SettingsWindow:
             messagebox.showerror("Error", f"Failed to open folder: {str(e)}")
     
     def create_hidden_list_tab(self):
-        """Create Manual Hidden List tab"""
+        """Create Hidden Items List tab with Alert and Delay sections"""
         hidden_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(hidden_frame, text="🔒 Danh sách ẩn")
 
         # Title
-        ttk.Label(hidden_frame, text="Symbols đã ẩn thủ công",
+        ttk.Label(hidden_frame, text="Quản lý các sản phẩm đã ẩn",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=5)
-        
+
         # Info
-        info_text = "Danh sách symbols đã bị hide thủ công từ Delay board (Right-click → Hide)"
+        info_text = "Danh sách các sản phẩm đã bị ẩn (vĩnh viễn hoặc tạm thời). Click chuột phải để bỏ ẩn."
         ttk.Label(hidden_frame, text=info_text, foreground='blue').pack(anchor=tk.W, pady=5)
-        
-        # List frame
-        list_frame = ttk.Frame(hidden_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=10)
-        
-        # Treeview for hidden list
-        columns = ('Broker', 'Symbol')
-        self.hidden_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15)
-        
-        self.hidden_tree.heading('Broker', text='Broker')
-        self.hidden_tree.heading('Symbol', text='Symbol')
-        
-        self.hidden_tree.column('Broker', width=200)
-        self.hidden_tree.column('Symbol', width=200)
-        
-        # Scrollbar
-        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self.hidden_tree.yview)
-        self.hidden_tree.configure(yscrollcommand=vsb.set)
-        
-        self.hidden_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Buttons
-        btn_frame = ttk.Frame(hidden_frame)
-        btn_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Button(btn_frame, text="🔓 Bỏ ẩn đã chọn",
-                  command=self.unhide_selected).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🗑️ Xóa tất cả",
-                  command=self.clear_all_hidden).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🔄 Làm mới",
-                  command=self.refresh_hidden_list).pack(side=tk.LEFT, padx=5)
-        
+
+        # ================== SECTION 1: HIDDEN ALERT ITEMS ==================
+        alert_section = ttk.LabelFrame(hidden_frame, text="🚨 Alert Items ẩn (Gap/Spike)", padding="10")
+        alert_section.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        # Alert items info
+        alert_info = "Sản phẩm ẩn từ bảng Gap/Spike (Right-click → Hide)"
+        ttk.Label(alert_section, text=alert_info, foreground='gray', font=('Arial', 9)).pack(anchor=tk.W, pady=2)
+
+        # Alert list frame
+        alert_list_frame = ttk.Frame(alert_section)
+        alert_list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Treeview for alert items
+        alert_columns = ('Broker', 'Symbol', 'Type', 'Hidden At', 'Expires')
+        self.hidden_alert_tree = ttk.Treeview(alert_list_frame, columns=alert_columns, show='headings', height=8)
+
+        self.hidden_alert_tree.heading('Broker', text='Broker')
+        self.hidden_alert_tree.heading('Symbol', text='Symbol')
+        self.hidden_alert_tree.heading('Type', text='Loại ẩn')
+        self.hidden_alert_tree.heading('Hidden At', text='Thời gian ẩn')
+        self.hidden_alert_tree.heading('Expires', text='Hết hạn')
+
+        self.hidden_alert_tree.column('Broker', width=150)
+        self.hidden_alert_tree.column('Symbol', width=100)
+        self.hidden_alert_tree.column('Type', width=120)
+        self.hidden_alert_tree.column('Hidden At', width=150)
+        self.hidden_alert_tree.column('Expires', width=150)
+
+        # Scrollbar for alert tree
+        alert_vsb = ttk.Scrollbar(alert_list_frame, orient="vertical", command=self.hidden_alert_tree.yview)
+        self.hidden_alert_tree.configure(yscrollcommand=alert_vsb.set)
+
+        self.hidden_alert_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        alert_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind right-click context menu for alert items
+        self.hidden_alert_tree.bind("<Button-3>", self.show_alert_hidden_context_menu)
+
+        # Alert buttons
+        alert_btn_frame = ttk.Frame(alert_section)
+        alert_btn_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Button(alert_btn_frame, text="🔓 Bỏ ẩn đã chọn",
+                  command=self.unhide_selected_alerts).pack(side=tk.LEFT, padx=5)
+        ttk.Button(alert_btn_frame, text="🗑️ Xóa tất cả",
+                  command=self.clear_all_hidden_alerts).pack(side=tk.LEFT, padx=5)
+
+        # ================== SECTION 2: HIDDEN DELAY ITEMS ==================
+        delay_section = ttk.LabelFrame(hidden_frame, text="⏱️ Delay Items ẩn", padding="10")
+        delay_section.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        # Delay items info
+        delay_info = "Sản phẩm ẩn từ bảng Delay: 🔒 Thủ công (Right-click → Hide) | ⏰ Tự động (delay quá lâu)"
+        ttk.Label(delay_section, text=delay_info, foreground='gray', font=('Arial', 9)).pack(anchor=tk.W, pady=2)
+
+        # Delay list frame
+        delay_list_frame = ttk.Frame(delay_section)
+        delay_list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Treeview for delay items
+        delay_columns = ('Broker', 'Symbol', 'Type')
+        self.hidden_delay_tree = ttk.Treeview(delay_list_frame, columns=delay_columns, show='headings', height=8)
+
+        self.hidden_delay_tree.heading('Broker', text='Broker')
+        self.hidden_delay_tree.heading('Symbol', text='Symbol')
+        self.hidden_delay_tree.heading('Type', text='Loại ẩn')
+
+        self.hidden_delay_tree.column('Broker', width=150)
+        self.hidden_delay_tree.column('Symbol', width=100)
+        self.hidden_delay_tree.column('Type', width=150)
+
+        # Scrollbar for delay tree
+        delay_vsb = ttk.Scrollbar(delay_list_frame, orient="vertical", command=self.hidden_delay_tree.yview)
+        self.hidden_delay_tree.configure(yscrollcommand=delay_vsb.set)
+
+        self.hidden_delay_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        delay_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind right-click context menu for delay items
+        self.hidden_delay_tree.bind("<Button-3>", self.show_delay_hidden_context_menu)
+
+        # Delay buttons
+        delay_btn_frame = ttk.Frame(delay_section)
+        delay_btn_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Button(delay_btn_frame, text="🔓 Bỏ ẩn đã chọn",
+                  command=self.unhide_selected_delays).pack(side=tk.LEFT, padx=5)
+        ttk.Button(delay_btn_frame, text="🗑️ Xóa tất cả",
+                  command=self.clear_all_hidden_delays).pack(side=tk.LEFT, padx=5)
+
+        # ================== GLOBAL ACTIONS ==================
+        global_btn_frame = ttk.Frame(hidden_frame)
+        global_btn_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Button(global_btn_frame, text="🔄 Làm mới tất cả",
+                  command=self.refresh_all_hidden_lists).pack(side=tk.LEFT, padx=5)
+
         # Initial load
-        self.refresh_hidden_list()
+        self.refresh_all_hidden_lists()
     
     def create_tools_tab(self):
         """Create Tools tab for Trading Hours & Raw Data"""
@@ -6622,68 +6687,322 @@ class SettingsWindow:
             logger.error(f"Error exporting to text: {e}")
             messagebox.showerror("Error", f"Lỗi export: {str(e)}")
     
-    def refresh_hidden_list(self):
-        """Refresh the hidden list display"""
+    # ==================== ALERT HIDDEN LIST METHODS ====================
+    def refresh_alert_hidden_list(self):
+        """Refresh the alert hidden list display"""
         try:
             # Clear existing items
-            for item in self.hidden_tree.get_children():
-                self.hidden_tree.delete(item)
-            
-            # Add all manually hidden symbols
-            for key in sorted(manual_hidden_delays.keys()):
+            for item in self.hidden_alert_tree.get_children():
+                self.hidden_alert_tree.delete(item)
+
+            # Add all hidden alert items
+            current_time = time.time()
+            for key, info in sorted(hidden_alert_items.items()):
                 broker, symbol = key.split('_', 1)
-                self.hidden_tree.insert('', 'end', values=(broker, symbol), tags=(key,))
-            
+
+                # Determine type
+                hidden_until = info.get('hidden_until')
+                if hidden_until is None:
+                    hide_type = "🔒 Vĩnh viễn"
+                    expires_str = "Không bao giờ"
+                else:
+                    duration_minutes = info.get('duration_minutes', 0)
+                    hide_type = f"⏱️ Tạm thời ({duration_minutes}p)"
+                    expires_time = datetime.fromtimestamp(hidden_until)
+                    expires_str = expires_time.strftime("%H:%M:%S %d/%m")
+
+                # Hidden at time
+                hidden_at = info.get('hidden_at', current_time)
+                hidden_at_str = datetime.fromtimestamp(hidden_at).strftime("%H:%M:%S %d/%m")
+
+                self.hidden_alert_tree.insert('', 'end',
+                                             values=(broker, symbol, hide_type, hidden_at_str, expires_str),
+                                             tags=(key,))
+
         except Exception as e:
-            logger.error(f"Error refreshing hidden list: {e}")
-    
-    def unhide_selected(self):
-        """Unhide selected symbols"""
+            logger.error(f"Error refreshing alert hidden list: {e}")
+
+    def show_alert_hidden_context_menu(self, event):
+        """Show context menu for alert hidden items"""
         try:
-            selected = self.hidden_tree.selection()
+            # Select item under cursor
+            item = self.hidden_alert_tree.identify_row(event.y)
+            if item:
+                self.hidden_alert_tree.selection_set(item)
+
+                # Get broker and symbol
+                values = self.hidden_alert_tree.item(item, 'values')
+                broker = values[0]
+                symbol = values[1]
+
+                # Create context menu
+                context_menu = tk.Menu(self.window, tearoff=0)
+                context_menu.add_command(
+                    label=f"🔓 Bỏ ẩn {symbol}",
+                    command=lambda: self.unhide_alert_from_context(broker, symbol)
+                )
+
+                context_menu.tk_popup(event.x_root, event.y_root)
+        except Exception as e:
+            logger.error(f"Error showing alert context menu: {e}")
+
+    def unhide_alert_from_context(self, broker, symbol):
+        """Unhide alert item from context menu"""
+        try:
+            key = f"{broker}_{symbol}"
+            if key in hidden_alert_items:
+                unhide_alert_item(broker, symbol)
+                self.refresh_alert_hidden_list()
+                self.main_app.update_alert_board_display()
+                self.main_app.log(f"🔓 Unhidden alert: {broker}_{symbol}")
+                messagebox.showinfo("Success", f"Đã bỏ ẩn {symbol}")
+        except Exception as e:
+            logger.error(f"Error unhiding alert from context: {e}")
+            messagebox.showerror("Error", f"Lỗi bỏ ẩn: {str(e)}")
+
+    def unhide_selected_alerts(self):
+        """Unhide selected alert items"""
+        try:
+            selected = self.hidden_alert_tree.selection()
             if not selected:
-                messagebox.showwarning("No Selection", "Vui lòng chọn symbol cần unhide")
+                messagebox.showwarning("No Selection", "Vui lòng chọn alert cần bỏ ẩn")
                 return
-            
+
             count = 0
             for item in selected:
-                key = self.hidden_tree.item(item, 'tags')[0]
+                key = self.hidden_alert_tree.item(item, 'tags')[0]
+                broker, symbol = key.split('_', 1)
+                unhide_alert_item(broker, symbol)
+                count += 1
+
+            if count > 0:
+                self.refresh_alert_hidden_list()
+                self.main_app.update_alert_board_display()
+                self.main_app.log(f"🔓 Unhidden {count} alert(s)")
+                messagebox.showinfo("Success", f"Đã bỏ ẩn {count} alert(s)")
+
+        except Exception as e:
+            logger.error(f"Error unhiding selected alerts: {e}")
+            messagebox.showerror("Error", f"Lỗi bỏ ẩn: {str(e)}")
+
+    def clear_all_hidden_alerts(self):
+        """Clear all hidden alert items"""
+        try:
+            if not hidden_alert_items:
+                messagebox.showinfo("Info", "Không có alert nào bị ẩn")
+                return
+
+            count = len(hidden_alert_items)
+            confirm = messagebox.askyesno("Confirm",
+                                         f"Bạn có chắc muốn bỏ ẩn tất cả {count} alerts?")
+            if confirm:
+                hidden_alert_items.clear()
+                save_hidden_alert_items()
+                self.refresh_alert_hidden_list()
+                self.main_app.update_alert_board_display()
+                self.main_app.log(f"🔓 Cleared all {count} hidden alerts")
+                messagebox.showinfo("Success", f"Đã bỏ ẩn tất cả {count} alerts")
+
+        except Exception as e:
+            logger.error(f"Error clearing all hidden alerts: {e}")
+            messagebox.showerror("Error", f"Lỗi clear all: {str(e)}")
+
+    # ==================== DELAY HIDDEN LIST METHODS ====================
+    def refresh_delay_hidden_list(self):
+        """Refresh the delay hidden list display - includes both manual and auto-hidden delays"""
+        try:
+            # Clear existing items
+            for item in self.hidden_delay_tree.get_children():
+                self.hidden_delay_tree.delete(item)
+
+            current_time = time.time()
+            delay_threshold = self.main_app.delay_threshold.get()
+            auto_hide_time = delay_settings.get('auto_hide_time', 3600)
+
+            # Collect all hidden delays (manual + auto)
+            all_hidden = {}
+
+            # 1. Add manually hidden delays
+            for key in manual_hidden_delays.keys():
+                broker, symbol = key.split('_', 1)
+                all_hidden[key] = {
+                    'broker': broker,
+                    'symbol': symbol,
+                    'type': '🔒 Thủ công',
+                    'manual': True
+                }
+
+            # 2. Add auto-hidden delays (delay >= auto_hide_time)
+            for key, tracking_info in bid_tracking.items():
                 if key in manual_hidden_delays:
-                    del manual_hidden_delays[key]
-                    count += 1
-            
+                    continue  # Skip if already added as manual
+
+                last_change_time = tracking_info['last_change_time']
+                delay_duration = current_time - last_change_time
+
+                # Check if auto-hidden (delay >= threshold AND >= auto_hide_time)
+                if delay_duration >= delay_threshold and delay_duration >= auto_hide_time:
+                    broker, symbol = key.split('_', 1)
+
+                    # Check if market is open (only show if supposed to be trading)
+                    if broker in market_data and symbol in market_data[broker]:
+                        symbol_data = market_data[broker][symbol]
+                        is_open = symbol_data.get('isOpen', False)
+
+                        if is_open:  # Only add if market is open (otherwise it's expected delay)
+                            delay_minutes = int(delay_duration / 60)
+                            all_hidden[key] = {
+                                'broker': broker,
+                                'symbol': symbol,
+                                'type': f'⏰ Tự động ({delay_minutes}p)',
+                                'manual': False
+                            }
+
+            # Insert all hidden items sorted by broker_symbol
+            for key in sorted(all_hidden.keys()):
+                item = all_hidden[key]
+                broker = item['broker']
+                symbol = item['symbol']
+                hide_type = item['type']
+
+                # Store both key and manual flag in tags
+                tag_data = f"{key}|{'manual' if item['manual'] else 'auto'}"
+                self.hidden_delay_tree.insert('', 'end',
+                                             values=(broker, symbol, hide_type),
+                                             tags=(tag_data,))
+
+        except Exception as e:
+            logger.error(f"Error refreshing delay hidden list: {e}")
+
+    def show_delay_hidden_context_menu(self, event):
+        """Show context menu for delay hidden items"""
+        try:
+            # Select item under cursor
+            item = self.hidden_delay_tree.identify_row(event.y)
+            if item:
+                self.hidden_delay_tree.selection_set(item)
+
+                # Get broker, symbol and type
+                values = self.hidden_delay_tree.item(item, 'values')
+                broker = values[0]
+                symbol = values[1]
+
+                # Get tag to check if manual or auto
+                tags = self.hidden_delay_tree.item(item, 'tags')
+                if tags:
+                    tag_data = tags[0]
+                    is_manual = '|manual' in tag_data
+                else:
+                    is_manual = False
+
+                # Create context menu
+                context_menu = tk.Menu(self.window, tearoff=0)
+
+                if is_manual:
+                    context_menu.add_command(
+                        label=f"🔓 Bỏ ẩn {symbol}",
+                        command=lambda: self.unhide_delay_from_context(broker, symbol)
+                    )
+                else:
+                    context_menu.add_command(
+                        label=f"⚠️ {symbol} (Tự động ẩn - không thể bỏ ẩn)",
+                        state='disabled'
+                    )
+                    context_menu.add_separator()
+                    context_menu.add_command(
+                        label="ℹ️ Delay này sẽ tự động hiện lại khi bid thay đổi",
+                        state='disabled'
+                    )
+
+                context_menu.tk_popup(event.x_root, event.y_root)
+        except Exception as e:
+            logger.error(f"Error showing delay context menu: {e}")
+
+    def unhide_delay_from_context(self, broker, symbol):
+        """Unhide delay item from context menu"""
+        try:
+            key = f"{broker}_{symbol}"
+            if key in manual_hidden_delays:
+                del manual_hidden_delays[key]
+                save_manual_hidden_delays()
+                self.refresh_delay_hidden_list()
+                self.main_app.update_delay_board_display()
+                self.main_app.log(f"🔓 Unhidden delay: {broker}_{symbol}")
+                messagebox.showinfo("Success", f"Đã bỏ ẩn {symbol}")
+        except Exception as e:
+            logger.error(f"Error unhiding delay from context: {e}")
+            messagebox.showerror("Error", f"Lỗi bỏ ẩn: {str(e)}")
+
+    def unhide_selected_delays(self):
+        """Unhide selected delay items (only manual ones)"""
+        try:
+            selected = self.hidden_delay_tree.selection()
+            if not selected:
+                messagebox.showwarning("No Selection", "Vui lòng chọn delay cần bỏ ẩn")
+                return
+
+            count = 0
+            skipped = 0
+            for item in selected:
+                tag_data = self.hidden_delay_tree.item(item, 'tags')[0]
+
+                # Check if manual or auto
+                if '|manual' in tag_data:
+                    key = tag_data.split('|')[0]
+                    if key in manual_hidden_delays:
+                        del manual_hidden_delays[key]
+                        count += 1
+                else:
+                    skipped += 1
+
             if count > 0:
                 save_manual_hidden_delays()
-                self.refresh_hidden_list()
+                self.refresh_delay_hidden_list()
                 self.main_app.update_delay_board_display()
-                self.main_app.log(f"🔓 Unhidden {count} symbol(s)")
-                messagebox.showinfo("Success", f"Đã unhide {count} symbol(s)")
-            
+                self.main_app.log(f"🔓 Unhidden {count} delay(s)")
+
+                if skipped > 0:
+                    messagebox.showinfo("Success",
+                                      f"Đã bỏ ẩn {count} delay(s) thủ công.\n"
+                                      f"Bỏ qua {skipped} delay(s) tự động ẩn.")
+                else:
+                    messagebox.showinfo("Success", f"Đã bỏ ẩn {count} delay(s)")
+            elif skipped > 0:
+                messagebox.showwarning("Warning",
+                                     f"Không thể bỏ ẩn {skipped} delay(s) tự động.\n"
+                                     f"Chỉ có thể bỏ ẩn delay ẩn thủ công.")
+
         except Exception as e:
-            logger.error(f"Error unhiding selected: {e}")
-            messagebox.showerror("Error", f"Lỗi unhide: {str(e)}")
-    
-    def clear_all_hidden(self):
-        """Clear all manually hidden symbols"""
+            logger.error(f"Error unhiding selected delays: {e}")
+            messagebox.showerror("Error", f"Lỗi bỏ ẩn: {str(e)}")
+
+    def clear_all_hidden_delays(self):
+        """Clear all manually hidden delay items"""
         try:
             if not manual_hidden_delays:
-                messagebox.showinfo("Info", "Không có symbols bị hidden")
+                messagebox.showinfo("Info", "Không có delay nào bị ẩn")
                 return
-            
+
             count = len(manual_hidden_delays)
-            confirm = messagebox.askyesno("Confirm", 
-                                         f"Bạn có chắc muốn unhide tất cả {count} symbols?")
+            confirm = messagebox.askyesno("Confirm",
+                                         f"Bạn có chắc muốn bỏ ẩn tất cả {count} delays?")
             if confirm:
                 manual_hidden_delays.clear()
                 save_manual_hidden_delays()
-                self.refresh_hidden_list()
+                self.refresh_delay_hidden_list()
                 self.main_app.update_delay_board_display()
-                self.main_app.log(f"🔓 Cleared all {count} hidden symbols")
-                messagebox.showinfo("Success", f"Đã unhide tất cả {count} symbols")
-            
+                self.main_app.log(f"🔓 Cleared all {count} hidden delays")
+                messagebox.showinfo("Success", f"Đã bỏ ẩn tất cả {count} delays")
+
         except Exception as e:
-            logger.error(f"Error clearing all hidden: {e}")
+            logger.error(f"Error clearing all hidden delays: {e}")
             messagebox.showerror("Error", f"Lỗi clear all: {str(e)}")
+
+    # ==================== GLOBAL REFRESH ====================
+    def refresh_all_hidden_lists(self):
+        """Refresh both alert and delay hidden lists"""
+        self.refresh_alert_hidden_list()
+        self.refresh_delay_hidden_list()
 
 # ===================== HIDDEN DELAYS WINDOW =====================
 class HiddenDelaysWindow:
