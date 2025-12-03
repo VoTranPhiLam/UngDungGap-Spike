@@ -2794,11 +2794,8 @@ class GapSpikeDetectorGUI:
 
         ttk.Button(control_frame, text="Cài đặt", command=self.open_settings).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="📸 Hình ảnh", command=self.open_picture_gallery).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="Kết nối", command=self.open_connected_brokers).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="🔄 Khởi động lại Python", command=self.reset_python_connection,
                   style='Accent.TButton').pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="🔒 Hidden Alerts", command=self.open_hidden_alerts_window).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(control_frame, text="Xóa cảnh báo", command=self.clear_alerts).pack(side=tk.RIGHT, padx=5)
 
         # Mute button (using tk.Button for color support)
         self.mute_button = tk.Button(control_frame, text="🔊 Mute", command=self.toggle_mute,
@@ -3025,6 +3022,9 @@ class GapSpikeDetectorGUI:
         # Bind double-click
         self.point_tree.bind('<Double-Button-1>', self.on_point_symbol_double_click)
 
+        # Bind right-click for context menu
+        self.point_tree.bind('<Button-3>', self.show_point_context_menu)
+
         # ===================== BẢNG 2: PERCENT-BASED (Không có cấu hình) =====================
         percent_table_frame = ttk.LabelFrame(self.root, text="📈 Bảng 2: Sản phẩm không có thông số riêng (Percent-based)", padding="10")
         percent_table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -3061,6 +3061,9 @@ class GapSpikeDetectorGUI:
 
         # Bind double-click
         self.percent_tree.bind('<Double-Button-1>', self.on_percent_symbol_double_click)
+
+        # Bind right-click for context menu
+        self.percent_tree.bind('<Button-3>', self.show_percent_context_menu)
 
         # Main Table Frame (LEGACY - Giữ lại cho tương thích)
         table_frame = ttk.LabelFrame(self.root, text="Kết quả phát hiện Gap & Spike (Legacy - Tất cả)", padding="10")
@@ -3963,6 +3966,211 @@ class GapSpikeDetectorGUI:
             pass
         except Exception as e:
             logger.error(f"Error handling percent symbol double-click: {e}")
+
+    def show_point_context_menu(self, event):
+        """Show context menu for Point-based table"""
+        try:
+            # Select item at cursor
+            item = self.point_tree.identify_row(event.y)
+            if item:
+                self.point_tree.selection_set(item)
+
+                # Create context menu
+                menu = tk.Menu(self.root, tearoff=0)
+                menu.add_command(label="📊 Di chuyển sang Bảng 2 (%)",
+                               command=self.move_from_point_to_percent)
+                menu.post(event.x_root, event.y_root)
+        except Exception as e:
+            logger.error(f"Error showing point context menu: {e}")
+
+    def show_percent_context_menu(self, event):
+        """Show context menu for Percent-based table"""
+        try:
+            # Select item at cursor
+            item = self.percent_tree.identify_row(event.y)
+            if item:
+                self.percent_tree.selection_set(item)
+
+                # Create context menu
+                menu = tk.Menu(self.root, tearoff=0)
+                menu.add_command(label="📊 Di chuyển sang Bảng 1 (Point)",
+                               command=self.move_from_percent_to_point)
+                menu.post(event.x_root, event.y_root)
+        except Exception as e:
+            logger.error(f"Error showing percent context menu: {e}")
+
+    def move_from_point_to_percent(self):
+        """Di chuyển sản phẩm từ bảng Point sang bảng Percent"""
+        try:
+            # Get selected items
+            selected_items = self.point_tree.selection()
+            if not selected_items:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất 1 sản phẩm để di chuyển!")
+                return
+
+            # Show dialog to input Gap % and Spike %
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Nhập thông số % cho sản phẩm")
+            dialog.geometry("400x200")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            ttk.Label(dialog, text="Nhập thông số % để di chuyển sang Bảng 2:",
+                     font=('Arial', 11, 'bold')).pack(pady=10)
+
+            # Gap % input
+            gap_frame = ttk.Frame(dialog)
+            gap_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(gap_frame, text="Gap %:", width=15).pack(side=tk.LEFT)
+            gap_var = tk.DoubleVar(value=0.5)
+            ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Spike % input
+            spike_frame = ttk.Frame(dialog)
+            spike_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(spike_frame, text="Spike %:", width=15).pack(side=tk.LEFT)
+            spike_var = tk.DoubleVar(value=1.0)
+            ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # OK and Cancel buttons
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=20)
+
+            def on_ok():
+                gap_percent = gap_var.get()
+                spike_percent = spike_var.get()
+
+                # Process each selected item
+                moved_count = 0
+                for item in selected_items:
+                    values = self.point_tree.item(item, 'values')
+                    broker = values[0]
+                    symbol = values[1]
+                    broker_symbol = f"{broker}_{symbol}"
+
+                    # Save as percent-based configuration
+                    gap_settings[broker_symbol] = gap_percent
+                    spike_settings[broker_symbol] = spike_percent
+
+                    # Remove from custom thresholds (Point-based config)
+                    if broker_symbol in custom_thresholds:
+                        if 'gap_point' in custom_thresholds[broker_symbol]:
+                            del custom_thresholds[broker_symbol]['gap_point']
+                        if 'spike_point' in custom_thresholds[broker_symbol]:
+                            del custom_thresholds[broker_symbol]['spike_point']
+
+                        # Save percent thresholds
+                        custom_thresholds[broker_symbol]['gap_percent'] = gap_percent
+                        custom_thresholds[broker_symbol]['spike_percent'] = spike_percent
+
+                    moved_count += 1
+
+                # Save settings
+                schedule_save('gap_settings')
+                schedule_save('spike_settings')
+                schedule_save('custom_thresholds')
+
+                self.log(f"✅ Đã di chuyển {moved_count} sản phẩm từ Bảng 1 sang Bảng 2 (Gap: {gap_percent}%, Spike: {spike_percent}%)")
+                self.update_display()
+                dialog.destroy()
+
+            def on_cancel():
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Hủy", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error moving from point to percent: {e}")
+            messagebox.showerror("Lỗi", f"Không thể di chuyển sản phẩm: {e}")
+
+    def move_from_percent_to_point(self):
+        """Di chuyển sản phẩm từ bảng Percent sang bảng Point"""
+        try:
+            # Get selected items
+            selected_items = self.percent_tree.selection()
+            if not selected_items:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất 1 sản phẩm để di chuyển!")
+                return
+
+            # Show dialog to input Gap Point and Spike Point
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Nhập thông số Point cho sản phẩm")
+            dialog.geometry("400x200")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            ttk.Label(dialog, text="Nhập thông số Point để di chuyển sang Bảng 1:",
+                     font=('Arial', 11, 'bold')).pack(pady=10)
+
+            # Gap Point input
+            gap_frame = ttk.Frame(dialog)
+            gap_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(gap_frame, text="Gap Point:", width=15).pack(side=tk.LEFT)
+            gap_var = tk.DoubleVar(value=0.0001)
+            ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Spike Point input
+            spike_frame = ttk.Frame(dialog)
+            spike_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(spike_frame, text="Spike Point:", width=15).pack(side=tk.LEFT)
+            spike_var = tk.DoubleVar(value=0.0002)
+            ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # OK and Cancel buttons
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=20)
+
+            def on_ok():
+                gap_point = gap_var.get()
+                spike_point = spike_var.get()
+
+                # Process each selected item
+                moved_count = 0
+                for item in selected_items:
+                    values = self.percent_tree.item(item, 'values')
+                    broker = values[0]
+                    symbol = values[1]
+                    broker_symbol = f"{broker}_{symbol}"
+
+                    # Save as point-based configuration
+                    if broker_symbol not in custom_thresholds:
+                        custom_thresholds[broker_symbol] = {}
+                    custom_thresholds[broker_symbol]['gap_point'] = gap_point
+                    custom_thresholds[broker_symbol]['spike_point'] = spike_point
+
+                    # Remove from gap_settings and spike_settings (Percent-based config)
+                    if broker_symbol in gap_settings:
+                        del gap_settings[broker_symbol]
+                    if broker_symbol in spike_settings:
+                        del spike_settings[broker_symbol]
+
+                    # Remove percent thresholds
+                    if 'gap_percent' in custom_thresholds[broker_symbol]:
+                        del custom_thresholds[broker_symbol]['gap_percent']
+                    if 'spike_percent' in custom_thresholds[broker_symbol]:
+                        del custom_thresholds[broker_symbol]['spike_percent']
+
+                    moved_count += 1
+
+                # Save settings
+                schedule_save('gap_settings')
+                schedule_save('spike_settings')
+                schedule_save('custom_thresholds')
+
+                self.log(f"✅ Đã di chuyển {moved_count} sản phẩm từ Bảng 2 sang Bảng 1 (Gap: {gap_point} Point, Spike: {spike_point} Point)")
+                self.update_display()
+                dialog.destroy()
+
+            def on_cancel():
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Hủy", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error moving from percent to point: {e}")
+            messagebox.showerror("Lỗi", f"Không thể di chuyển sản phẩm: {e}")
 
     def clear_alerts(self):
         """Xóa tất cả alerts"""
@@ -5000,7 +5208,18 @@ class SettingsWindow:
         self.main_app = main_app
         self.window = tk.Toplevel(parent)
         self.window.title("⚙️ Cài đặt - Gap, Spike & Delay")
-        self.window.geometry("800x600")
+
+        # Set window size to 3/4 of screen
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        window_width = int(screen_width * 0.75)
+        window_height = int(screen_height * 0.75)
+
+        # Center the window
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+
+        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
         # Make window modal - chặn thao tác cửa sổ parent
         self.window.transient(parent)  # Window luôn nằm trên parent
@@ -5960,7 +6179,19 @@ class SettingsWindow:
             text="💾 Lưu cài đặt tự động khởi động lại",
             command=self.save_python_reset_settings_ui
         ).pack(anchor=tk.W, pady=10)
-    
+
+        # Connection section
+        connection_section = ttk.LabelFrame(tools_frame, text="🔗 Kết nối", padding="20")
+        connection_section.pack(fill=tk.X, pady=10)
+
+        ttk.Label(connection_section,
+                 text="Xem danh sách các broker đang kết nối với ứng dụng",
+                 foreground='blue').pack(anchor=tk.W, pady=5)
+
+        ttk.Button(connection_section, text="🔗 Mở kết nối",
+                  command=self.main_app.open_connected_brokers,
+                  width=30).pack(anchor=tk.W, pady=5)
+
     def create_auto_send_tab(self):
         """Create Auto-Send Google Sheets Settings tab"""
         auto_send_frame = ttk.Frame(self.notebook, padding="10")
