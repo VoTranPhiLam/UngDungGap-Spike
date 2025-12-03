@@ -163,6 +163,15 @@ GAP_CONFIG_FILE = 'THAM_SO_GAP_INDICATOR.txt'
 # Results for symbols with Point-based calculation
 gap_spike_point_results = {}  # {broker_symbol: {gap_info, spike_info, matched_alias, ...}}
 
+# ✨ Loading state and progress tracking
+loading_state = {
+    'is_loading': True,  # Start with loading state
+    'total_symbols': 0,  # Total unique symbols from all brokers
+    'processed_symbols': 0,  # Number of symbols processed
+    'symbols_seen': set(),  # Track unique broker_symbol pairs
+    'first_batch_received': False  # Track if we received first data batch
+}
+
 def load_gap_config_file():
     """
     Đọc file THAM_SO_GAP_INDICATOR.txt và parse thành gap_config
@@ -242,6 +251,10 @@ def load_gap_config_file():
 def find_symbol_config(symbol):
     """
     Tìm cấu hình cho symbol (matching với aliases, case-insensitive)
+    Hỗ trợ:
+    - Exact match (ưu tiên 1): So sánh chính xác 100%
+    - Prefix match (ưu tiên 2): Tìm alias là prefix của symbol
+      Ví dụ: BTCUSD.m, BTCUSD-spot, BTCUSD_futures đều match với BTCUSD
 
     Args:
         symbol: Symbol name to search
@@ -254,7 +267,7 @@ def find_symbol_config(symbol):
 
     symbol_lower = symbol.lower().strip()
 
-    # Lookup in reverse map (O(1) - very fast)
+    # Bước 1: Thử exact match (O(1) - very fast)
     symbol_chuan = gap_config_reverse_map.get(symbol_lower)
 
     if symbol_chuan:
@@ -267,6 +280,25 @@ def find_symbol_config(symbol):
             matched_alias = symbol  # Matched via alias
 
         return symbol_chuan, config, matched_alias
+
+    # Bước 2: Thử prefix match (O(n) where n = số aliases)
+    # Tìm alias dài nhất là prefix của symbol để tránh false positive
+    # Ví dụ: BTCUSDM nên match BTCUSD chứ không phải BTC
+    best_match = None
+    best_match_len = 0
+    best_alias = None
+
+    for alias_lower, symbol_chuan in gap_config_reverse_map.items():
+        if symbol_lower.startswith(alias_lower):
+            if len(alias_lower) > best_match_len:
+                best_match = symbol_chuan
+                best_match_len = len(alias_lower)
+                best_alias = alias_lower
+
+    if best_match:
+        config = gap_config[best_match]
+        # Return original symbol as matched_alias để hiển thị đúng
+        return best_match, config, symbol
 
     return None, None, None
 
@@ -2195,6 +2227,13 @@ def receive_data():
                     candle_data.pop(key, None)
                     continue
 
+                # ✨ NGAY KHI NHẬN SYMBOL: Dò với file txt để đảm bảo chính xác 100%
+                # Check symbol config TRƯỚC KHI tính gap/spike (để track tất cả symbols)
+                symbol_chuan_early, config_early, matched_alias_early = find_symbol_config(symbol)
+
+                # Track symbol vào loading state (để progress bar chính xác)
+                loading_state['symbols_seen'].add(key)
+
                 # Track bid changes for delay detection
                 current_time = time.time()
 
@@ -2311,62 +2350,85 @@ def receive_data():
                     skip_minutes = market_open_settings.get('skip_minutes_after_open', 0)
                     skip_reason = f"Bỏ {skip_minutes} phút đầu sau khi mở cửa"
 
-                if should_calculate:
-                    # ⚡ OPTIMIZATION: Tính spread 1 lần và truyền vào cả 2 hàm
-                    spread_percent = calculate_spread_percent(
-                        symbol_market_data.get('bid', 0),
-                        symbol_market_data.get('ask', 0)
-                    )
+                # ⚡ OPTIMIZATION: Tính spread 1 lần và truyền vào cả 2 hàm
+                spread_percent = calculate_spread_percent(
+                    symbol_market_data.get('bid', 0),
+                    symbol_market_data.get('ask', 0)
+                )
 
-                    # ✨ NEW: Check if symbol has config (Point-based calculation)
-                    symbol_chuan, config, matched_alias = find_symbol_config(symbol)
-
-                    if config:
-                        # Symbol có cấu hình → Dùng Point-based calculation
+                # ✨ Sử dụng config đã check sẵn ở đầu (symbol_chuan_early)
+                # Đảm bảo tất cả symbol đều được xử lý, kể cả khi should_calculate=False
+                if config_early:
+                    # Symbol có cấu hình trong file txt → Point-based
+                    if should_calculate:
+                        # Tính gap/spike thực tế
                         gap_info = calculate_gap_point(symbol, broker, symbol_market_data, spread_percent)
                         spike_info = calculate_spike_point(symbol, broker, symbol_market_data, spread_percent)
-
-                        # Lưu vào gap_spike_point_results (riêng biệt)
-                        gap_spike_point_results[key] = {
-                            'symbol': symbol,
-                            'broker': broker,
-                            'timestamp': timestamp,
-                            'price': (symbol_market_data['bid'] + symbol_market_data['ask']) / 2,
-                            'gap': gap_info,
-                            'spike': spike_info,
-                            'symbol_chuan': symbol_chuan,
-                            'matched_alias': matched_alias,
-                            'calculation_type': 'point'
-                        }
                     else:
-                        # Symbol không có cấu hình → Dùng % calculation (cũ)
+                        # Không tính (market đóng/skip period) nhưng vẫn lưu vào point_results
+                        gap_info = {
+                            'detected': False,
+                            'strength': 0.0,
+                            'message': f'{skip_reason} - Không xét gap/spike',
+                            'default_gap_percent': config_early.get('default_gap_percent', 0),
+                            'threshold_point': 0,
+                            'point_gap': 0
+                        }
+                        spike_info = {
+                            'detected': False,
+                            'strength': 0.0,
+                            'message': f'{skip_reason} - Không xét gap/spike',
+                            'spike_point': 0
+                        }
+
+                    # ✅ LUÔN lưu vào gap_spike_point_results (kể cả khi không tính)
+                    gap_spike_point_results[key] = {
+                        'symbol': symbol,
+                        'broker': broker,
+                        'timestamp': timestamp,
+                        'price': (symbol_market_data['bid'] + symbol_market_data['ask']) / 2,
+                        'gap': gap_info,
+                        'spike': spike_info,
+                        'symbol_chuan': symbol_chuan_early,
+                        'matched_alias': matched_alias_early,
+                        'calculation_type': 'point'
+                    }
+                else:
+                    # Symbol không có cấu hình → Percent-based
+                    if should_calculate:
                         gap_info = calculate_gap(symbol, broker, symbol_market_data, spread_percent)
                         spike_info = calculate_spike(symbol, broker, symbol_market_data, spread_percent)
+                    else:
+                        gap_info = {
+                            'detected': False,
+                            'strength': 0.0,
+                            'message': f'{skip_reason} - Không xét gap/spike'
+                        }
+                        spike_info = {
+                            'detected': False,
+                            'strength': 0.0,
+                            'message': f'{skip_reason} - Không xét gap/spike'
+                        }
+
+                    # ✅ LUÔN lưu vào gap_spike_results (percent-based)
+                    gap_spike_results[key] = {
+                        'symbol': symbol,
+                        'broker': broker,
+                        'timestamp': timestamp,
+                        'price': (symbol_market_data['bid'] + symbol_market_data['ask']) / 2,
+                        'gap': gap_info,
+                        'spike': spike_info
+                    }
+
+                # Update Alert Board (Bảng Kèo) - chỉ khi có detection
+                if config_early:
+                    # Point-based symbols
+                    if gap_spike_point_results[key]['gap']['detected'] or gap_spike_point_results[key]['spike']['detected']:
+                        update_alert_board(key, gap_spike_point_results[key])
                 else:
-                    # Không tính gap/spike (do market đóng hoặc skip period)
-                    gap_info = {
-                        'detected': False,
-                        'strength': 0.0,
-                        'message': f'{skip_reason} - Không xét gap/spike'
-                    }
-                    spike_info = {
-                        'detected': False,
-                        'strength': 0.0,
-                        'message': f'{skip_reason} - Không xét gap/spike'
-                    }
-
-                # Lưu kết quả (⚡ key already calculated at line 1770 - reuse it)
-                gap_spike_results[key] = {
-                    'symbol': symbol,
-                    'broker': broker,
-                    'timestamp': timestamp,
-                    'price': (symbol_market_data['bid'] + symbol_market_data['ask']) / 2,
-                    'gap': gap_info,
-                    'spike': spike_info
-                }
-
-                # Update Alert Board (Bảng Kèo)
-                update_alert_board(key, gap_spike_results[key])
+                    # Percent-based symbols
+                    if gap_spike_results[key]['gap']['detected'] or gap_spike_results[key]['spike']['detected']:
+                        update_alert_board(key, gap_spike_results[key])
 
         # 🔊 PHÁT ÂM THANH CẢnh báo cho toàn bộ bảng (sau khi xử lý tất cả symbols)
         # Check and play board alerts (not per-product, but for entire board)
@@ -2374,10 +2436,27 @@ def receive_data():
         check_and_play_board_alert('spike')
         check_and_play_board_alert('delay')
 
+        # ✨ Update loading state - track processed symbols
+        if not loading_state['first_batch_received']:
+            loading_state['first_batch_received'] = True
+
+        # Update total and processed count (symbols đã được track trong vòng lặp ở trên)
+        loading_state['total_symbols'] = len(loading_state['symbols_seen'])
+        loading_state['processed_symbols'] = len(gap_spike_results) + len(gap_spike_point_results)
+
+        # Check if we've processed all symbols (100% complete)
+        # Mark loading complete if: received first batch AND all seen symbols have been processed
+        if loading_state['first_batch_received'] and loading_state['total_symbols'] > 0:
+            # Calculate processing percentage
+            processed_pct = (loading_state['processed_symbols'] / loading_state['total_symbols']) * 100
+            if processed_pct >= 100:
+                loading_state['is_loading'] = False
+                logger.info(f"✅ Loading complete! Processed {loading_state['processed_symbols']}/{loading_state['total_symbols']} symbols")
+
         # Cleanup old/stale data (brokers không còn gửi data)
         cleanup_stale_data()
-        
-        logger.info(f"Received data from {broker}: {len(symbols_data)} symbols")
+
+        logger.info(f"Received data from {broker}: {len(symbols_data)} symbols | Progress: {loading_state['processed_symbols']}/{loading_state['total_symbols']}")
         return jsonify({"ok": True, "message": "Data received"})
         
     except Exception as e:
@@ -2592,6 +2671,45 @@ class GapSpikeDetectorGUI:
         # Bind double-click to open chart
         self.alert_tree.bind('<Double-Button-1>', self.on_alert_double_click)
 
+        # ===================== PROGRESS BAR (Loading State) =====================
+        self.progress_frame = ttk.Frame(self.root)
+        self.progress_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Create canvas for circular progress bar
+        self.progress_canvas = tk.Canvas(self.progress_frame, width=120, height=120, bg='white', highlightthickness=0)
+        self.progress_canvas.pack(side=tk.LEFT, padx=20)
+
+        # Progress text frame
+        progress_text_frame = ttk.Frame(self.progress_frame)
+        progress_text_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
+
+        self.progress_title_label = ttk.Label(
+            progress_text_frame,
+            text="⏳ Đang dò sản phẩm với file cấu hình...",
+            font=('Arial', 12, 'bold'),
+            foreground='#0066cc'
+        )
+        self.progress_title_label.pack(anchor=tk.W, pady=(10, 5))
+
+        self.progress_status_label = ttk.Label(
+            progress_text_frame,
+            text="Đang xử lý: 0/0 sản phẩm",
+            font=('Arial', 10),
+            foreground='#666666'
+        )
+        self.progress_status_label.pack(anchor=tk.W)
+
+        self.progress_detail_label = ttk.Label(
+            progress_text_frame,
+            text="Vui lòng chờ hệ thống dò tất cả sản phẩm với file txt để đảm bảo chính xác 100%...",
+            font=('Arial', 9, 'italic'),
+            foreground='#999999'
+        )
+        self.progress_detail_label.pack(anchor=tk.W, pady=(5, 0))
+
+        # Initially show progress frame
+        self.progress_frame.pack(fill=tk.X, padx=10, pady=5)
+
         # ===================== BẢNG 1: POINT-BASED (Có cấu hình từ file) =====================
         point_table_frame = ttk.LabelFrame(self.root, text="📊 Bảng 1: Sản phẩm có thông số Gap/Spike (Point-based)", padding="10")
         point_table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -2743,21 +2861,136 @@ class GapSpikeDetectorGUI:
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
         
+    def update_loading_progress(self):
+        """
+        Update loading progress bar and labels based on loading_state
+        """
+        total = loading_state['total_symbols']
+        processed = loading_state['processed_symbols']
+        is_loading = loading_state['is_loading']
+
+        # Calculate percentage
+        if total > 0:
+            percentage = min(100, (processed / total) * 100)
+        else:
+            percentage = 0
+
+        # Update progress bar
+        self.draw_circular_progress(percentage)
+
+        # Update status labels
+        if is_loading:
+            self.progress_title_label.config(
+                text="⏳ Đang dò sản phẩm với file cấu hình...",
+                foreground='#0066cc'
+            )
+            self.progress_status_label.config(
+                text=f"Đang xử lý: {processed}/{total} sản phẩm ({percentage:.1f}%)"
+            )
+            self.progress_detail_label.config(
+                text="Vui lòng chờ hệ thống dò tất cả sản phẩm với file txt để đảm bảo chính xác 100%..."
+            )
+            # Show progress frame
+            self.progress_frame.pack(fill=tk.X, padx=10, pady=5, before=self.point_tree.master)
+        else:
+            # Loading complete
+            self.progress_title_label.config(
+                text="✅ Hoàn tất! Đã dò xong tất cả sản phẩm",
+                foreground='#00cc00'
+            )
+            self.progress_status_label.config(
+                text=f"Đã xử lý: {processed}/{total} sản phẩm (100%)"
+            )
+            self.progress_detail_label.config(
+                text="Tất cả sản phẩm đã được dò với file txt và hiển thị chính xác trong bảng dưới đây."
+            )
+
+            # Hide progress frame after 3 seconds (give user time to see completion)
+            if not hasattr(self, '_progress_hidden'):
+                self.root.after(3000, lambda: self.progress_frame.pack_forget())
+                self._progress_hidden = True
+
+    def draw_circular_progress(self, percentage):
+        """
+        Vẽ circular progress bar
+
+        Args:
+            percentage: % hoàn thành (0-100)
+        """
+        # Clear canvas
+        self.progress_canvas.delete("all")
+
+        # Canvas size
+        width = 120
+        height = 120
+        center_x = width / 2
+        center_y = height / 2
+        radius = 45
+
+        # Background circle (gray)
+        self.progress_canvas.create_oval(
+            center_x - radius, center_y - radius,
+            center_x + radius, center_y + radius,
+            outline='#e0e0e0', width=8, fill=''
+        )
+
+        # Progress arc (blue)
+        if percentage > 0:
+            # Convert percentage to angle (0% = 90°, 100% = -270°)
+            # Tkinter angles: 0° is 3 o'clock, 90° is 12 o'clock
+            extent = -(percentage / 100) * 360
+
+            self.progress_canvas.create_arc(
+                center_x - radius, center_y - radius,
+                center_x + radius, center_y + radius,
+                start=90, extent=extent,
+                outline='#0066cc', width=8, style='arc'
+            )
+
+        # Percentage text in center
+        color = '#0066cc' if percentage < 100 else '#00cc00'
+        self.progress_canvas.create_text(
+            center_x, center_y,
+            text=f"{int(percentage)}%",
+            font=('Arial', 20, 'bold'),
+            fill=color
+        )
+
     def update_display(self):
         """Cập nhật hiển thị dữ liệu"""
         try:
             with data_lock:
+                # ✨ Update loading progress
+                self.update_loading_progress()
+
                 # Update connection status warning
                 self.update_connection_warning()
-                
+
                 # Update delay board
                 self.update_delay_board_display()
-                
+
                 # Update alert board
                 self.update_alert_board_display()
 
-                # ✨ Update Point-based and Percent-based tables
-                self.update_point_percent_tables()
+                # ✨ Update Point-based and Percent-based tables (only if loading complete)
+                if not loading_state['is_loading']:
+                    self.update_point_percent_tables()
+                else:
+                    # Still loading - clear tables and show loading message
+                    for item in self.point_tree.get_children():
+                        self.point_tree.delete(item)
+                    for item in self.percent_tree.get_children():
+                        self.percent_tree.delete(item)
+
+                    self.point_tree.insert('', 'end', values=(
+                        '⏳ Đang tải...',
+                        'Vui lòng chờ',
+                        'hệ thống dò',
+                        'tất cả sản phẩm',
+                        'với file txt',
+                        'để chính xác',
+                        '100%'
+                    ))
 
                 # Clear existing items (Legacy table)
                 for item in self.tree.get_children():
