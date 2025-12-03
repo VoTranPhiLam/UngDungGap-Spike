@@ -3674,6 +3674,21 @@ class GapSpikeDetectorGUI:
         - Bảng 1: Point-based (symbols có cấu hình)
         - Bảng 2: Percent-based (symbols không có cấu hình)
         """
+        # 💾 Lưu selection hiện tại trước khi clear
+        point_selected_keys = set()
+        for item in self.point_tree.selection():
+            values = self.point_tree.item(item, 'values')
+            if len(values) >= 2:
+                # Key = "Broker_Symbol"
+                point_selected_keys.add(f"{values[0]}_{values[1]}")
+
+        percent_selected_keys = set()
+        for item in self.percent_tree.selection():
+            values = self.percent_tree.item(item, 'values')
+            if len(values) >= 2:
+                # Key = "Broker_Symbol"
+                percent_selected_keys.add(f"{values[0]}_{values[1]}")
+
         # Clear existing items
         for item in self.point_tree.get_children():
             self.point_tree.delete(item)
@@ -3840,6 +3855,25 @@ class GapSpikeDetectorGUI:
                     '-',
                     'Chờ dữ liệu từ EA...'
                 ))
+
+        # 🔄 Khôi phục selection sau khi insert xong
+        # Restore selection cho point_tree
+        if point_selected_keys:
+            for item in self.point_tree.get_children():
+                values = self.point_tree.item(item, 'values')
+                if len(values) >= 2:
+                    item_key = f"{values[0]}_{values[1]}"
+                    if item_key in point_selected_keys:
+                        self.point_tree.selection_add(item)
+
+        # Restore selection cho percent_tree
+        if percent_selected_keys:
+            for item in self.percent_tree.get_children():
+                values = self.percent_tree.item(item, 'values')
+                if len(values) >= 2:
+                    item_key = f"{values[0]}_{values[1]}"
+                    if item_key in percent_selected_keys:
+                        self.percent_tree.selection_add(item)
 
     def on_point_symbol_double_click(self, event):
         """Handle double-click on Point-based table"""
