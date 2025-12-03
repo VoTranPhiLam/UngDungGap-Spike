@@ -196,8 +196,8 @@ def load_gap_config_file():
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
 
-                # Skip empty lines and comments
-                if not line or line.startswith('#'):
+                # Skip empty lines and comments (both # and //)
+                if not line or line.startswith('#') or line.startswith('//'):
                     continue
 
                 # Parse line
@@ -216,7 +216,7 @@ def load_gap_config_file():
                 # Last 2 fields
                 try:
                     default_gap_percent = float(parts[-2].strip())
-                    custom_gap = int(parts[-1].strip())
+                    custom_gap = float(parts[-1].strip())  # Changed from int to float to support decimal values
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Line {line_num} in {GAP_CONFIG_FILE} has invalid numeric values: {line} - {e}")
                     continue
