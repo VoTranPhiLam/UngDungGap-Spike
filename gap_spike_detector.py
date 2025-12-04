@@ -3896,6 +3896,24 @@ class GapSpikeDetectorGUI:
                     if item_key in percent_selected_keys:
                         self.percent_tree.selection_add(item)
 
+        # ✨ APPLY LẠI SEARCH FILTER cho Bảng 1 và Bảng 2 (sau khi insert xong)
+        # Kiểm tra nếu đang có keyword search thì áp dụng lại filter
+        if hasattr(self, 'point_search_var'):
+            current_search = self.point_search_var.get().strip()
+            if current_search:
+                try:
+                    self.filter_point_by_search()
+                except Exception as e:
+                    logger.error(f"Error reapplying point search filter: {e}")
+
+        if hasattr(self, 'percent_search_var'):
+            current_search = self.percent_search_var.get().strip()
+            if current_search:
+                try:
+                    self.filter_percent_by_search()
+                except Exception as e:
+                    logger.error(f"Error reapplying percent search filter: {e}")
+
     def on_point_symbol_double_click(self, event):
         """Handle double-click on Point-based table"""
         try:
@@ -4141,6 +4159,33 @@ class GapSpikeDetectorGUI:
                         custom_thresholds[broker_symbol]['gap_percent'] = gap_percent
                         custom_thresholds[broker_symbol]['spike_percent'] = spike_percent
 
+                    # ✨ DI CHUYỂN item từ gap_spike_point_results sang gap_spike_results
+                    if broker_symbol in gap_spike_point_results:
+                        # Lấy dữ liệu từ point results
+                        point_data = gap_spike_point_results[broker_symbol]
+
+                        # Chuyển sang percent results với cấu trúc phù hợp
+                        gap_spike_results[broker_symbol] = {
+                            'symbol': point_data.get('symbol', symbol),
+                            'broker': point_data.get('broker', broker),
+                            'timestamp': point_data.get('timestamp', 0),
+                            'price': point_data.get('price', 0),
+                            'gap': {
+                                'detected': False,  # Reset detection status
+                                'percentage': 0,
+                                'direction': 'none',
+                                'message': 'Đã chuyển sang Percent-based'
+                            },
+                            'spike': {
+                                'detected': False,  # Reset detection status
+                                'strength': 0,
+                                'message': 'Đã chuyển sang Percent-based'
+                            }
+                        }
+
+                        # Xóa khỏi point results
+                        del gap_spike_point_results[broker_symbol]
+
                     moved_count += 1
 
                 # Save settings
@@ -4233,6 +4278,38 @@ class GapSpikeDetectorGUI:
                         del custom_thresholds[broker_symbol]['gap_percent']
                     if 'spike_percent' in custom_thresholds[broker_symbol]:
                         del custom_thresholds[broker_symbol]['spike_percent']
+
+                    # ✨ DI CHUYỂN item từ gap_spike_results sang gap_spike_point_results
+                    if broker_symbol in gap_spike_results:
+                        # Lấy dữ liệu từ percent results
+                        percent_data = gap_spike_results[broker_symbol]
+
+                        # Chuyển sang point results với cấu trúc phù hợp
+                        gap_spike_point_results[broker_symbol] = {
+                            'symbol': percent_data.get('symbol', symbol),
+                            'broker': percent_data.get('broker', broker),
+                            'timestamp': percent_data.get('timestamp', 0),
+                            'price': percent_data.get('price', 0),
+                            'gap': {
+                                'detected': False,  # Reset detection status
+                                'point_gap': 0,
+                                'direction': 'none',
+                                'threshold_point': gap_point,
+                                'default_gap_percent': 0,
+                                'message': 'Đã chuyển sang Point-based'
+                            },
+                            'spike': {
+                                'detected': False,  # Reset detection status
+                                'spike_point': 0,
+                                'message': 'Đã chuyển sang Point-based'
+                            },
+                            'symbol_chuan': '',
+                            'matched_alias': '',
+                            'calculation_type': 'point'
+                        }
+
+                        # Xóa khỏi percent results
+                        del gap_spike_results[broker_symbol]
 
                     moved_count += 1
 
