@@ -2609,9 +2609,24 @@ def receive_data():
                     symbol_market_data.get('ask', 0)
                 )
 
-                # ✨ Sử dụng config đã check sẵn ở đầu (symbol_chuan_early)
-                # Đảm bảo tất cả symbol đều được xử lý, kể cả khi should_calculate=False
-                if config_early:
+                # ✨ QUY ĐỊNH BẢNG: Ưu tiên kiểm tra custom_thresholds/gap_settings trước file txt
+                # Logic: custom_thresholds (gap_point/spike_point) > gap_settings/spike_settings > file txt
+                broker_symbol = f"{broker}_{symbol}"
+
+                # 1. Kiểm tra custom_thresholds có gap_point hoặc spike_point → Point-based
+                is_point_based_by_custom = False
+                if broker_symbol in custom_thresholds:
+                    if 'gap_point' in custom_thresholds[broker_symbol] or 'spike_point' in custom_thresholds[broker_symbol]:
+                        is_point_based_by_custom = True
+
+                # 2. Kiểm tra gap_settings hoặc spike_settings → Percent-based (override file txt)
+                is_percent_based_by_settings = (broker_symbol in gap_settings or broker_symbol in spike_settings)
+
+                # 3. Quyết định cuối cùng:
+                #    - Nếu có gap_point/spike_point trong custom_thresholds → Point-based
+                #    - Nếu có trong gap_settings/spike_settings (và không có gap_point) → Percent-based
+                #    - Cuối cùng mới dựa vào file txt (config_early)
+                if is_point_based_by_custom or (config_early and not is_percent_based_by_settings):
                     # Symbol có cấu hình trong file txt → Point-based
                     if should_calculate:
                         # Tính gap/spike thực tế
@@ -2675,7 +2690,8 @@ def receive_data():
 
                 # Update Alert Board (Bảng Kèo) - gọi khi có detection HOẶC đã có trong alert_board
                 # (để có thể xử lý grace period và xóa items đã hết alert)
-                if config_early:
+                # ✨ Sử dụng cùng logic quyết định bảng như ở trên
+                if is_point_based_by_custom or (config_early and not is_percent_based_by_settings):
                     # Point-based symbols
                     result = gap_spike_point_results[key]
                     has_detection = result['gap']['detected'] or result['spike']['detected']
