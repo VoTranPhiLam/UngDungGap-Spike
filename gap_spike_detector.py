@@ -30,6 +30,7 @@ import glob
 import gspread
 from google.oauth2.service_account import Credentials
 from concurrent.futures import ThreadPoolExecutor
+import difflib
 
 # ===================== CONFIGURATION =====================
 HTTP_PORT = 80
@@ -363,19 +364,38 @@ def load_gap_config_file():
         logger.error(f"Error loading {GAP_CONFIG_FILE}: {e}", exc_info=True)
         return {}
 
+def calculate_similarity(str1, str2):
+    """
+    Tính độ tương đồng giữa 2 chuỗi (0-100%)
+    Sử dụng SequenceMatcher của difflib
+
+    Args:
+        str1: Chuỗi thứ nhất
+        str2: Chuỗi thứ hai
+
+    Returns:
+        float: Độ tương đồng từ 0.0 đến 1.0 (0% - 100%)
+    """
+    return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+
 def find_symbol_config(symbol):
     """
     Tìm cấu hình cho symbol (matching với aliases, case-insensitive)
-    Hỗ trợ:
+    Hỗ trợ 3 mức độ matching (theo thứ tự ưu tiên):
     - Exact match (ưu tiên 1): So sánh chính xác 100%
     - Prefix match (ưu tiên 2): Tìm alias là prefix của symbol
       Ví dụ: BTCUSD.m, BTCUSD-spot, BTCUSD_futures đều match với BTCUSD
+    - Similarity match (ưu tiên 3): Tìm alias có độ tương đồng >= 70%
+      Ví dụ: BTCUSDT có thể match với BTCUSD nếu similarity >= 70%
 
     Args:
         symbol: Symbol name to search
 
     Returns:
-        tuple: (symbol_chuan, config_dict, matched_alias) or (None, None, None)
+        tuple: (symbol_chuan, config_dict, matched_alias_from_txt) or (None, None, None)
+        - symbol_chuan: Symbol chính từ file txt (BTCUSD)
+        - config_dict: Cấu hình (aliases, default_gap_percent, custom_gap)
+        - matched_alias_from_txt: Alias từ file txt đã khớp (XBTUSD, Bitcoin, v.v.)
     """
     if not gap_config:
         return None, None, None
@@ -388,11 +408,17 @@ def find_symbol_config(symbol):
     if symbol_chuan:
         config = gap_config[symbol_chuan]
 
-        # Determine which alias matched
+        # Tìm alias từ file txt đã khớp
         if symbol_lower == symbol_chuan.lower():
-            matched_alias = symbol_chuan  # Exact match with canonical symbol
+            matched_alias = symbol_chuan  # Exact match với symbol chính
         else:
-            matched_alias = symbol  # Matched via alias
+            # Tìm alias nào trong danh sách khớp với symbol
+            for alias in config['aliases']:
+                if alias.lower() == symbol_lower:
+                    matched_alias = alias  # Trả về alias từ file txt
+                    break
+            else:
+                matched_alias = symbol_chuan  # Fallback
 
         return symbol_chuan, config, matched_alias
 
@@ -401,19 +427,52 @@ def find_symbol_config(symbol):
     # Ví dụ: BTCUSDM nên match BTCUSD chứ không phải BTC
     best_match = None
     best_match_len = 0
-    best_alias = None
+    best_matched_alias = None
 
     for alias_lower, symbol_chuan in gap_config_reverse_map.items():
         if symbol_lower.startswith(alias_lower):
             if len(alias_lower) > best_match_len:
                 best_match = symbol_chuan
                 best_match_len = len(alias_lower)
-                best_alias = alias_lower
+                # Tìm alias gốc (không lowercase) từ config
+                config = gap_config[symbol_chuan]
+                for alias in config['aliases']:
+                    if alias.lower() == alias_lower:
+                        best_matched_alias = alias  # Alias từ file txt
+                        break
+                if not best_matched_alias:
+                    best_matched_alias = symbol_chuan
 
     if best_match:
         config = gap_config[best_match]
-        # Return original symbol as matched_alias để hiển thị đúng
-        return best_match, config, symbol
+        # Trả về alias từ file txt thay vì symbol từ sàn
+        return best_match, config, best_matched_alias
+
+    # Bước 3: Thử similarity match (O(n) - fallback cuối cùng)
+    # Tìm alias có độ tương đồng >= 70%
+    best_similarity = 0.0
+    best_match = None
+    best_matched_alias = None
+    SIMILARITY_THRESHOLD = 0.70  # 70%
+
+    for alias_lower, symbol_chuan in gap_config_reverse_map.items():
+        similarity = calculate_similarity(symbol_lower, alias_lower)
+        if similarity >= SIMILARITY_THRESHOLD and similarity > best_similarity:
+            best_similarity = similarity
+            best_match = symbol_chuan
+            # Tìm alias gốc (không lowercase) từ config
+            config = gap_config[symbol_chuan]
+            for alias in config['aliases']:
+                if alias.lower() == alias_lower:
+                    best_matched_alias = alias
+                    break
+            if not best_matched_alias:
+                best_matched_alias = symbol_chuan
+
+    if best_match:
+        config = gap_config[best_match]
+        logger.info(f"✅ Fuzzy match: '{symbol}' → '{best_matched_alias}' (similarity: {best_similarity*100:.1f}%)")
+        return best_match, config, best_matched_alias
 
     return None, None, None
 
