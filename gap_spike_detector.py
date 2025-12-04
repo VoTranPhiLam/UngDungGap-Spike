@@ -377,36 +377,37 @@ def load_gap_config_file():
         logger.error(f"Error loading {GAP_CONFIG_FILE}: {e}", exc_info=True)
         return {}
 
-def check_5_char_match(str1, str2):
+def is_subsequence_match(str1, str2, min_length=5):
     """
-    Kiểm tra xem có ít nhất 5 ký tự liên tiếp khớp nhau không
-    Logic đơn giản hơn để tránh lag khi so sánh với nhiều alias
+    Kiểm tra xem các ký tự có khớp theo thứ tự từ trái qua phải không (subsequence matching)
+    Ví dụ: "USTEC" là subsequence của "USTECH100" (U-S-T-E-C theo thứ tự)
+           "USTECH" KHÔNG phải subsequence của "HSTECH" (không có U ở đầu)
 
     Args:
         str1: Chuỗi thứ nhất (symbol từ sàn)
         str2: Chuỗi thứ hai (alias từ file txt)
+        min_length: Số ký tự tối thiểu phải khớp (mặc định 5)
 
     Returns:
-        bool: True nếu có ít nhất 5 ký tự liên tiếp khớp nhau
+        bool: True nếu một chuỗi là subsequence của chuỗi kia với ít nhất min_length ký tự
     """
     str1_lower = str1.lower()
     str2_lower = str2.lower()
 
-    # Kiểm tra các substring 5 ký tự của str1 có xuất hiện trong str2 không
-    if len(str1_lower) >= 5:
-        for i in range(len(str1_lower) - 4):
-            substring = str1_lower[i:i+5]
-            if substring in str2_lower:
-                return True
+    def is_subsequence(pattern, text):
+        """Kiểm tra pattern có phải subsequence của text không"""
+        if len(pattern) < min_length:
+            return False
 
-    # Kiểm tra ngược lại: các substring 5 ký tự của str2 có xuất hiện trong str1 không
-    if len(str2_lower) >= 5:
-        for i in range(len(str2_lower) - 4):
-            substring = str2_lower[i:i+5]
-            if substring in str1_lower:
-                return True
+        pattern_idx = 0
+        for char in text:
+            if pattern_idx < len(pattern) and char == pattern[pattern_idx]:
+                pattern_idx += 1
 
-    return False
+        return pattern_idx >= min_length
+
+    # Kiểm tra cả 2 chiều: str1 là subsequence của str2 hoặc ngược lại
+    return is_subsequence(str1_lower, str2_lower) or is_subsequence(str2_lower, str1_lower)
 
 def find_symbol_config(symbol):
     """
@@ -415,8 +416,8 @@ def find_symbol_config(symbol):
     - Exact match (ưu tiên 1): So sánh chính xác 100%
     - Prefix match (ưu tiên 2): Tìm alias là prefix của symbol
       Ví dụ: BTCUSD.m, BTCUSD-spot, BTCUSD_futures đều match với BTCUSD
-    - 5-char match (ưu tiên 3): Tìm alias có ít nhất 5 ký tự liên tiếp khớp nhau
-      Ví dụ: BTCUSDT có thể match với BTCUSD vì có 5 ký tự "BTCUS" khớp
+    - Subsequence match (ưu tiên 3): Tìm alias có ít nhất 5 ký tự khớp theo thứ tự từ trái qua phải
+      Ví dụ: USTECH100 match với USTEC (U-S-T-E-C theo thứ tự), nhưng HSTECH không match với USTECH
 
     Args:
         symbol: Symbol name to search
@@ -478,13 +479,13 @@ def find_symbol_config(symbol):
         # Trả về alias từ file txt thay vì symbol từ sàn
         return best_match, config, best_matched_alias
 
-    # Bước 3: Thử 5-char match (O(n) - fallback cuối cùng)
-    # Tìm alias có ít nhất 5 ký tự liên tiếp khớp nhau
+    # Bước 3: Thử subsequence match (O(n) - fallback cuối cùng)
+    # Tìm alias có ít nhất 5 ký tự khớp theo thứ tự từ trái qua phải
     best_match = None
     best_matched_alias = None
 
     for alias_lower, symbol_chuan in gap_config_reverse_map.items():
-        if check_5_char_match(symbol_lower, alias_lower):
+        if is_subsequence_match(symbol_lower, alias_lower):
             best_match = symbol_chuan
             # Tìm alias gốc (không lowercase) từ config
             config = gap_config[symbol_chuan]
@@ -499,7 +500,7 @@ def find_symbol_config(symbol):
 
     if best_match:
         config = gap_config[best_match]
-        logger.info(f"✅ 5-char match: '{symbol}' → '{best_matched_alias}'")
+        logger.info(f"✅ Subsequence match: '{symbol}' → '{best_matched_alias}'")
         return best_match, config, best_matched_alias
 
     return None, None, None
