@@ -4099,9 +4099,27 @@ class GapSpikeDetectorGUI:
                 messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất 1 sản phẩm để di chuyển!")
                 return
 
+            # 🔧 LƯU VALUES NGAY ĐỂ TRÁNH LỖI KHI TREE BỊ REFRESH
+            selected_data = []
+            for item in selected_items:
+                try:
+                    values = self.point_tree.item(item, 'values')
+                    if values:
+                        selected_data.append({
+                            'broker': values[0],
+                            'symbol': values[1]
+                        })
+                except Exception as e:
+                    logger.warning(f"Could not get values for item {item}: {e}")
+                    continue
+
+            if not selected_data:
+                messagebox.showwarning("Cảnh báo", "Không thể lấy thông tin sản phẩm đã chọn!")
+                return
+
             # Show dialog to input Gap % and Spike %
             dialog = tk.Toplevel(self.root)
-            selected_count = len(selected_items)
+            selected_count = len(selected_data)
             dialog.title(f"Nhập thông số % cho {selected_count} sản phẩm")
             dialog.geometry("450x220")
             dialog.transient(self.root)
@@ -4136,12 +4154,11 @@ class GapSpikeDetectorGUI:
                 gap_percent = gap_var.get()
                 spike_percent = spike_var.get()
 
-                # Process each selected item
+                # Process each selected item using saved data
                 moved_count = 0
-                for item in selected_items:
-                    values = self.point_tree.item(item, 'values')
-                    broker = values[0]
-                    symbol = values[1]
+                for item_data in selected_data:
+                    broker = item_data['broker']
+                    symbol = item_data['symbol']
                     broker_symbol = f"{broker}_{symbol}"
 
                     # Save as percent-based configuration
@@ -4216,9 +4233,27 @@ class GapSpikeDetectorGUI:
                 messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất 1 sản phẩm để di chuyển!")
                 return
 
+            # 🔧 LƯU VALUES NGAY ĐỂ TRÁNH LỖI KHI TREE BỊ REFRESH
+            selected_data = []
+            for item in selected_items:
+                try:
+                    values = self.percent_tree.item(item, 'values')
+                    if values:
+                        selected_data.append({
+                            'broker': values[0],
+                            'symbol': values[1]
+                        })
+                except Exception as e:
+                    logger.warning(f"Could not get values for item {item}: {e}")
+                    continue
+
+            if not selected_data:
+                messagebox.showwarning("Cảnh báo", "Không thể lấy thông tin sản phẩm đã chọn!")
+                return
+
             # Show dialog to input Gap Point and Spike Point
             dialog = tk.Toplevel(self.root)
-            selected_count = len(selected_items)
+            selected_count = len(selected_data)
             dialog.title(f"Nhập thông số Point cho {selected_count} sản phẩm")
             dialog.geometry("450x220")
             dialog.transient(self.root)
@@ -4253,12 +4288,11 @@ class GapSpikeDetectorGUI:
                 gap_point = gap_var.get()
                 spike_point = spike_var.get()
 
-                # Process each selected item
+                # Process each selected item using saved data
                 moved_count = 0
-                for item in selected_items:
-                    values = self.percent_tree.item(item, 'values')
-                    broker = values[0]
-                    symbol = values[1]
+                for item_data in selected_data:
+                    broker = item_data['broker']
+                    symbol = item_data['symbol']
                     broker_symbol = f"{broker}_{symbol}"
 
                     # Save as point-based configuration
