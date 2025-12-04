@@ -2864,12 +2864,6 @@ class GapSpikeDetectorGUI:
         self.delay_tree.bind('<Button-3>', self.show_delay_context_menu)
         
         # Stats Frame
-        stats_frame = ttk.LabelFrame(self.root, text="Thống kê", padding="10")
-        stats_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        self.stats_label = ttk.Label(stats_frame, text="Đang chờ dữ liệu...", font=('Arial', 10))
-        self.stats_label.pack()
-        
         # Alert Board (Bảng Kèo)
         alert_frame = ttk.LabelFrame(self.root, text="🔔 Bảng Kèo (Gap/Spike Alert)", padding="10")
         alert_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -2992,6 +2986,18 @@ class GapSpikeDetectorGUI:
         point_table_frame = ttk.LabelFrame(self.root, text="📊 Bảng 1: Sản phẩm có thông số Gap/Spike (Point-based)", padding="10")
         point_table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
+        # Search/Filter Frame for Point table
+        point_search_frame = ttk.Frame(point_table_frame)
+        point_search_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(point_search_frame, text="🔍 Tìm kiếm:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.point_search_var = tk.StringVar()
+        self.point_search_var.trace('w', lambda *args: self.filter_point_by_search())
+
+        point_search_entry = ttk.Entry(point_search_frame, textvariable=self.point_search_var, width=25)
+        point_search_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Label(point_search_frame, text="(Nhập tên broker hoặc symbol)", foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
+
         # Columns for Point-based table
         point_columns = ('Broker', 'Symbol', 'Alias Matched', 'Default Gap %', 'Threshold (Point)', 'Status', 'Gap/Spike (Point)')
         self.point_tree = ttk.Treeview(point_table_frame, columns=point_columns, show='headings', height=8)
@@ -3035,6 +3041,18 @@ class GapSpikeDetectorGUI:
         # ===================== BẢNG 2: PERCENT-BASED (Không có cấu hình) =====================
         percent_table_frame = ttk.LabelFrame(self.root, text="📈 Bảng 2: Sản phẩm không có thông số riêng (Percent-based)", padding="10")
         percent_table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Search/Filter Frame for Percent table
+        percent_search_frame = ttk.Frame(percent_table_frame)
+        percent_search_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(percent_search_frame, text="🔍 Tìm kiếm:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.percent_search_var = tk.StringVar()
+        self.percent_search_var.trace('w', lambda *args: self.filter_percent_by_search())
+
+        percent_search_entry = ttk.Entry(percent_search_frame, textvariable=self.percent_search_var, width=25)
+        percent_search_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Label(percent_search_frame, text="(Nhập tên broker hoặc symbol)", foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
 
         # Columns for Percent-based table
         percent_columns = ('Broker', 'Symbol', 'Gap %', 'Spike %', 'Status')
@@ -3354,11 +3372,7 @@ class GapSpikeDetectorGUI:
                         status
                     ), tags=(tag,))
 
-                
-                # Update statistics
-                stats_text = f"Brokers: {len(brokers)} | Symbols: {total_symbols} | GAPs: {total_gaps} | SPIKEs: {total_spikes}"
-                self.stats_label.config(text=stats_text)
-                
+
                 # Sau khi fill xong, nếu đang có keyword search thì áp dụng lại filter
                 if hasattr(self, 'search_symbol_var'):
                     current_search = self.search_symbol_var.get().strip()
@@ -4014,12 +4028,21 @@ class GapSpikeDetectorGUI:
             # Select item at cursor
             item = self.point_tree.identify_row(event.y)
             if item:
-                self.point_tree.selection_set(item)
+                # Add to selection instead of replacing (allows Ctrl+Click multi-select)
+                if item not in self.point_tree.selection():
+                    self.point_tree.selection_add(item)
+
+                # Get number of selected items
+                selected_count = len(self.point_tree.selection())
 
                 # Create context menu
                 menu = tk.Menu(self.root, tearoff=0)
-                menu.add_command(label="📊 Di chuyển sang Bảng 2 (%)",
-                               command=self.move_from_point_to_percent)
+                if selected_count > 1:
+                    menu.add_command(label=f"📊 Di chuyển {selected_count} sản phẩm sang Bảng 2 (%)",
+                                   command=self.move_from_point_to_percent)
+                else:
+                    menu.add_command(label="📊 Di chuyển sang Bảng 2 (%)",
+                                   command=self.move_from_point_to_percent)
                 menu.post(event.x_root, event.y_root)
         except Exception as e:
             logger.error(f"Error showing point context menu: {e}")
@@ -4030,12 +4053,21 @@ class GapSpikeDetectorGUI:
             # Select item at cursor
             item = self.percent_tree.identify_row(event.y)
             if item:
-                self.percent_tree.selection_set(item)
+                # Add to selection instead of replacing (allows Ctrl+Click multi-select)
+                if item not in self.percent_tree.selection():
+                    self.percent_tree.selection_add(item)
+
+                # Get number of selected items
+                selected_count = len(self.percent_tree.selection())
 
                 # Create context menu
                 menu = tk.Menu(self.root, tearoff=0)
-                menu.add_command(label="📊 Di chuyển sang Bảng 1 (Point)",
-                               command=self.move_from_percent_to_point)
+                if selected_count > 1:
+                    menu.add_command(label=f"📊 Di chuyển {selected_count} sản phẩm sang Bảng 1 (Point)",
+                                   command=self.move_from_percent_to_point)
+                else:
+                    menu.add_command(label="📊 Di chuyển sang Bảng 1 (Point)",
+                                   command=self.move_from_percent_to_point)
                 menu.post(event.x_root, event.y_root)
         except Exception as e:
             logger.error(f"Error showing percent context menu: {e}")
@@ -4051,12 +4083,17 @@ class GapSpikeDetectorGUI:
 
             # Show dialog to input Gap % and Spike %
             dialog = tk.Toplevel(self.root)
-            dialog.title("Nhập thông số % cho sản phẩm")
-            dialog.geometry("400x200")
+            selected_count = len(selected_items)
+            dialog.title(f"Nhập thông số % cho {selected_count} sản phẩm")
+            dialog.geometry("450x220")
             dialog.transient(self.root)
             dialog.grab_set()
 
-            ttk.Label(dialog, text="Nhập thông số % để di chuyển sang Bảng 2:",
+            if selected_count > 1:
+                label_text = f"Nhập thông số % để di chuyển {selected_count} sản phẩm sang Bảng 2:"
+            else:
+                label_text = "Nhập thông số % để di chuyển sang Bảng 2:"
+            ttk.Label(dialog, text=label_text,
                      font=('Arial', 11, 'bold')).pack(pady=10)
 
             # Gap % input
@@ -4136,12 +4173,17 @@ class GapSpikeDetectorGUI:
 
             # Show dialog to input Gap Point and Spike Point
             dialog = tk.Toplevel(self.root)
-            dialog.title("Nhập thông số Point cho sản phẩm")
-            dialog.geometry("400x200")
+            selected_count = len(selected_items)
+            dialog.title(f"Nhập thông số Point cho {selected_count} sản phẩm")
+            dialog.geometry("450x220")
             dialog.transient(self.root)
             dialog.grab_set()
 
-            ttk.Label(dialog, text="Nhập thông số Point để di chuyển sang Bảng 1:",
+            if selected_count > 1:
+                label_text = f"Nhập thông số Point để di chuyển {selected_count} sản phẩm sang Bảng 1:"
+            else:
+                label_text = "Nhập thông số Point để di chuyển sang Bảng 1:"
+            ttk.Label(dialog, text=label_text,
                      font=('Arial', 11, 'bold')).pack(pady=10)
 
             # Gap Point input
@@ -4431,6 +4473,112 @@ class GapSpikeDetectorGUI:
         # Auto scroll to first match
         if sorted_items:
             self.tree.see(sorted_items[0])
+
+    def filter_point_by_search(self):
+        """Tìm kiếm sản phẩm trong Bảng 1 (Point-based) với sắp xếp theo độ khớp"""
+        search_term = self.point_search_var.get().strip().upper()
+
+        # Lấy tất cả items hiện tại trong tree
+        all_items = self.point_tree.get_children()
+
+        if not search_term:
+            # Không có từ tìm → hiển thị tất cả
+            for item in all_items:
+                self.point_tree.item(item, tags=self.point_tree.item(item, 'tags'))
+            return
+
+        # Phân loại items theo độ khớp
+        exact_matches = []
+        starts_matches = []
+        contains_matches = []
+        no_matches = []
+
+        for item in all_items:
+            values = self.point_tree.item(item, 'values')
+            if not values or len(values) < 2:
+                continue
+
+            # Lấy broker (index 0) và symbol (index 1)
+            broker = str(values[0]).upper()
+            symbol = str(values[1]).upper()
+
+            # Kiểm tra độ khớp
+            if symbol == search_term or broker == search_term:
+                exact_matches.append(item)
+            elif symbol.startswith(search_term) or broker.startswith(search_term):
+                starts_matches.append(item)
+            elif search_term in symbol or search_term in broker:
+                contains_matches.append(item)
+            else:
+                no_matches.append(item)
+
+        # Sắp xếp và hiển thị
+        sorted_items = exact_matches + starts_matches + contains_matches
+
+        # Ẩn items không khớp
+        for item in no_matches:
+            self.point_tree.detach(item)
+
+        # Hiển thị items khớp
+        for idx, item in enumerate(sorted_items):
+            self.point_tree.reattach(item, '', idx)
+
+        # Auto scroll to first match
+        if sorted_items:
+            self.point_tree.see(sorted_items[0])
+
+    def filter_percent_by_search(self):
+        """Tìm kiếm sản phẩm trong Bảng 2 (Percent-based) với sắp xếp theo độ khớp"""
+        search_term = self.percent_search_var.get().strip().upper()
+
+        # Lấy tất cả items hiện tại trong tree
+        all_items = self.percent_tree.get_children()
+
+        if not search_term:
+            # Không có từ tìm → hiển thị tất cả
+            for item in all_items:
+                self.percent_tree.item(item, tags=self.percent_tree.item(item, 'tags'))
+            return
+
+        # Phân loại items theo độ khớp
+        exact_matches = []
+        starts_matches = []
+        contains_matches = []
+        no_matches = []
+
+        for item in all_items:
+            values = self.percent_tree.item(item, 'values')
+            if not values or len(values) < 2:
+                continue
+
+            # Lấy broker (index 0) và symbol (index 1)
+            broker = str(values[0]).upper()
+            symbol = str(values[1]).upper()
+
+            # Kiểm tra độ khớp
+            if symbol == search_term or broker == search_term:
+                exact_matches.append(item)
+            elif symbol.startswith(search_term) or broker.startswith(search_term):
+                starts_matches.append(item)
+            elif search_term in symbol or search_term in broker:
+                contains_matches.append(item)
+            else:
+                no_matches.append(item)
+
+        # Sắp xếp và hiển thị
+        sorted_items = exact_matches + starts_matches + contains_matches
+
+        # Ẩn items không khớp
+        for item in no_matches:
+            self.percent_tree.detach(item)
+
+        # Hiển thị items khớp
+        for idx, item in enumerate(sorted_items):
+            self.percent_tree.reattach(item, '', idx)
+
+        # Auto scroll to first match
+        if sorted_items:
+            self.percent_tree.see(sorted_items[0])
 
     def open_settings(self):
         """Mở cửa sổ settings"""
@@ -5293,10 +5441,13 @@ class SettingsWindow:
         
         # Tab 7: Auto-Send Google Sheets
         self.create_auto_send_tab()
-        
+
         # Tab 8: Audio Alerts (NEW)
         self.create_audio_settings_tab()
-    
+
+        # Load initial statistics
+        self.refresh_statistics()
+
     def create_delay_settings_tab(self):
         """Create Delay Settings tab"""
         delay_frame = ttk.Frame(self.notebook, padding="10")
@@ -6155,6 +6306,36 @@ class SettingsWindow:
         ttk.Label(tools_frame, text="Công cụ bổ sung",
                  font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=10)
 
+        # Statistics section
+        stats_section = ttk.LabelFrame(tools_frame, text="📊 Thống kê", padding="20")
+        stats_section.pack(fill=tk.X, pady=10)
+
+        ttk.Label(stats_section,
+                 text="Thống kê tổng quan về Gap & Spike",
+                 foreground='blue').pack(anchor=tk.W, pady=5)
+
+        # Create a frame for stats display
+        self.stats_display_frame = ttk.Frame(stats_section)
+        self.stats_display_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Stats labels
+        self.stats_brokers_label = ttk.Label(self.stats_display_frame, text="Brokers: -", font=('Arial', 11))
+        self.stats_brokers_label.pack(anchor=tk.W, pady=2)
+
+        self.stats_symbols_label = ttk.Label(self.stats_display_frame, text="Symbols: -", font=('Arial', 11))
+        self.stats_symbols_label.pack(anchor=tk.W, pady=2)
+
+        self.stats_gaps_label = ttk.Label(self.stats_display_frame, text="GAPs detected: -", font=('Arial', 11))
+        self.stats_gaps_label.pack(anchor=tk.W, pady=2)
+
+        self.stats_spikes_label = ttk.Label(self.stats_display_frame, text="SPIKEs detected: -", font=('Arial', 11))
+        self.stats_spikes_label.pack(anchor=tk.W, pady=2)
+
+        # Refresh button
+        ttk.Button(stats_section, text="🔄 Làm mới thống kê",
+                  command=self.refresh_statistics,
+                  width=25).pack(anchor=tk.W, pady=10)
+
         # Trading Hours section
         trading_hours_section = ttk.LabelFrame(tools_frame, text="📅 Giờ giao dịch", padding="20")
         trading_hours_section.pack(fill=tk.X, pady=10)
@@ -6388,7 +6569,42 @@ class SettingsWindow:
         except Exception as e:
             logger.error(f"Error saving Python reset settings: {e}")
             messagebox.showerror("Lỗi", f"Không thể lưu Auto Reset Python: {e}")
-    
+
+    def refresh_statistics(self):
+        """Refresh and display current statistics"""
+        try:
+            with data_lock:
+                total_symbols = 0
+                total_gaps = 0
+                total_spikes = 0
+                brokers = set()
+
+                # Count from gap_spike_results
+                for key, result in gap_spike_results.items():
+                    broker = result.get('broker', '')
+                    gap_info = result.get('gap', {})
+                    spike_info = result.get('spike', {})
+
+                    gap_detected = gap_info.get('detected', False)
+                    spike_detected = spike_info.get('detected', False)
+
+                    total_symbols += 1
+                    brokers.add(broker)
+                    if gap_detected:
+                        total_gaps += 1
+                    if spike_detected:
+                        total_spikes += 1
+
+            # Update labels
+            self.stats_brokers_label.config(text=f"Brokers: {len(brokers)}")
+            self.stats_symbols_label.config(text=f"Symbols: {total_symbols}")
+            self.stats_gaps_label.config(text=f"GAPs detected: {total_gaps}")
+            self.stats_spikes_label.config(text=f"SPIKEs detected: {total_spikes}")
+
+        except Exception as e:
+            logger.error(f"Error refreshing statistics: {e}")
+            messagebox.showerror("Lỗi", f"Không thể làm mới thống kê: {e}")
+
     def test_google_sheet_connection(self):
         """Test connection to Google Sheet"""
         try:
