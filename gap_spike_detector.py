@@ -75,6 +75,19 @@ hidden_alert_items = {}  # {broker_symbol: {'hidden_until': timestamp or None (p
 threshold_cache = {}  # {broker_symbol_type: (threshold_value, timestamp)}
 THRESHOLD_CACHE_TTL = 60  # seconds
 
+# ⚡ OPTIMIZATION: Cache tree items to enable delta updates
+tree_cache = {
+    'legacy': {},  # {broker_symbol: (values_tuple, tag)}
+    'alert': {},   # {broker_symbol: (values_tuple, tag)}
+    'point': {},   # {broker_symbol: (values_tuple, tag)}
+    'percent': {}  # {broker_symbol: (values_tuple, tag)}
+}
+last_data_snapshot = {
+    'gap_spike_results': {},
+    'gap_spike_point_results': {},
+    'alert_board': {}
+}
+
 delay_settings = {
     'threshold': 180,  # Default delay threshold in seconds
     'auto_hide_time': 3600  # Auto hide after 60 minutes
@@ -728,6 +741,56 @@ def get_today_date():
         _today_date_cache['date'] = datetime.now().date()
         _today_date_cache['timestamp'] = current_time
     return _today_date_cache['date']
+
+# ===================== DELTA UPDATE HELPERS =====================
+def update_tree_delta(tree, cache_key, new_data_dict, format_func):
+    """
+    ⚡ OPTIMIZATION: Update tree using delta approach (only changed items)
+
+    Args:
+        tree: Treeview widget
+        cache_key: Key in tree_cache ('legacy', 'alert', 'point', 'percent')
+        new_data_dict: Dictionary of new data {key: data}
+        format_func: Function to format data into (values_tuple, tag)
+
+    Returns:
+        dict: Mapping of keys to tree item IDs
+    """
+    cache = tree_cache[cache_key]
+    current_keys = set(cache.keys())
+    new_keys = set(new_data_dict.keys())
+
+    # Find items to delete, update, and insert
+    keys_to_delete = current_keys - new_keys
+    keys_to_check = current_keys & new_keys
+    keys_to_insert = new_keys - current_keys
+
+    # Delete removed items
+    for key in keys_to_delete:
+        item_id = cache[key].get('item_id')
+        if item_id and tree.exists(item_id):
+            tree.delete(item_id)
+        del cache[key]
+
+    # Update changed items
+    for key in keys_to_check:
+        values, tag = format_func(key, new_data_dict[key])
+        cached_values = cache[key].get('values')
+        cached_tag = cache[key].get('tag')
+
+        if values != cached_values or tag != cached_tag:
+            item_id = cache[key].get('item_id')
+            if item_id and tree.exists(item_id):
+                tree.item(item_id, values=values, tags=(tag,))
+                cache[key] = {'item_id': item_id, 'values': values, 'tag': tag}
+
+    # Insert new items
+    for key in keys_to_insert:
+        values, tag = format_func(key, new_data_dict[key])
+        item_id = tree.insert('', 'end', values=values, tags=(tag,))
+        cache[key] = {'item_id': item_id, 'values': values, 'tag': tag}
+
+    return cache
 
 # ===================== MARKET OPEN HELPER =====================
 def is_within_skip_period_after_open(symbol, broker, current_timestamp):
@@ -3467,9 +3530,9 @@ class GapSpikeDetectorGUI:
                     
         except Exception as e:
             logger.error(f"Error updating display: {e}")
-        
-        # Schedule next update
-        self.root.after(1000, self.update_display)
+
+        # ⚡ OPTIMIZED: Schedule next update (increased from 1000ms to 2000ms)
+        self.root.after(2000, self.update_display)
     
     def update_connection_warning(self):
         """Check and update connection status warning"""
@@ -3640,14 +3703,39 @@ class GapSpikeDetectorGUI:
             ))
     
     def update_alert_board_display(self):
-        """Cập nhật hiển thị Bảng Kèo"""
+        """⚡ OPTIMIZED: Cập nhật hiển thị Bảng Kèo với delta updates"""
+        current_time = time.time()
+
+        # ⚡ Check if data changed - avoid unnecessary sorting/rebuilding
+        if alert_board == last_data_snapshot.get('alert_board', {}):
+            # Data unchanged, only update grace period timers
+            cache = tree_cache['alert']
+            for key, cached_item in cache.items():
+                if key in alert_board:
+                    alert_info = alert_board[key]
+                    grace_start = alert_info.get('grace_period_start')
+                    if grace_start is not None:
+                        item_id = cached_item.get('item_id')
+                        if item_id and self.alert_tree.exists(item_id):
+                            elapsed = current_time - grace_start
+                            remaining = max(0, 15 - int(elapsed))
+                            grace_str = f"Xóa sau {remaining}s"
+                            # Update only grace column (index 9)
+                            values = list(self.alert_tree.item(item_id, 'values'))
+                            if len(values) >= 10:
+                                values[9] = grace_str
+                                self.alert_tree.item(item_id, values=values)
+            return
+
+        # ⚡ Data changed - do full rebuild but more efficiently
+        last_data_snapshot['alert_board'] = alert_board.copy()
+
         # Clear existing alert items
         for item in self.alert_tree.get_children():
             self.alert_tree.delete(item)
+        tree_cache['alert'].clear()
 
-        current_time = time.time()
-
-        # Sort by broker name
+        # Sort by broker name (only once)
         sorted_alerts = sorted(
             alert_board.items(),
             key=lambda x: (x[1]['data'].get('broker', ''), x[1]['data'].get('symbol', ''))
@@ -3721,7 +3809,7 @@ class GapSpikeDetectorGUI:
                     tag = 'grace'
 
             # Insert row
-            self.alert_tree.insert('', 'end', values=(
+            values = (
                 broker,
                 symbol,
                 f"{price:.5f}",
@@ -3732,7 +3820,10 @@ class GapSpikeDetectorGUI:
                 alert_type,
                 time_str,
                 grace_str
-            ), tags=(tag,))
+            )
+            item_id = self.alert_tree.insert('', 'end', values=values, tags=(tag,))
+            # ⚡ Cache item for delta updates
+            tree_cache['alert'][key] = {'item_id': item_id, 'values': values, 'tag': tag}
         
         # If no alerts, show message
         visible_count = len(sorted_alerts) - hidden_count
@@ -3766,10 +3857,24 @@ class GapSpikeDetectorGUI:
 
     def update_point_percent_tables(self):
         """
-        ✨ Cập nhật 2 bảng riêng biệt:
+        ⚡ OPTIMIZED: Cập nhật 2 bảng riêng biệt với delta updates:
         - Bảng 1: Point-based (symbols có cấu hình)
         - Bảng 2: Percent-based (symbols không có cấu hình)
         """
+        # ⚡ Check if data changed
+        point_data_changed = (gap_spike_point_results !=
+                             last_data_snapshot.get('gap_spike_point_results', {}))
+        percent_data_changed = (gap_spike_results !=
+                               last_data_snapshot.get('gap_spike_results', {}))
+
+        if not point_data_changed and not percent_data_changed:
+            # No data changes, skip update
+            return
+
+        # Update snapshots
+        last_data_snapshot['gap_spike_point_results'] = gap_spike_point_results.copy()
+        last_data_snapshot['gap_spike_results'] = gap_spike_results.copy()
+
         # 💾 Lưu selection hiện tại trước khi clear
         point_selected_keys = set()
         for item in self.point_tree.selection():
@@ -3790,6 +3895,8 @@ class GapSpikeDetectorGUI:
             self.point_tree.delete(item)
         for item in self.percent_tree.get_children():
             self.percent_tree.delete(item)
+        tree_cache['point'].clear()
+        tree_cache['percent'].clear()
 
         # ===== BẢNG 1: POINT-BASED =====
         # Sort by broker name
@@ -3848,7 +3955,7 @@ class GapSpikeDetectorGUI:
                 tag = 'spike_detected'
 
             # Insert row
-            self.point_tree.insert('', 'end', values=(
+            values = (
                 broker,
                 symbol,
                 matched_alias,
@@ -3856,7 +3963,10 @@ class GapSpikeDetectorGUI:
                 f"{threshold_point:.1f}",
                 status,
                 gap_spike_str
-            ), tags=(tag,))
+            )
+            item_id = self.point_tree.insert('', 'end', values=values, tags=(tag,))
+            # ⚡ Cache item for delta updates
+            tree_cache['point'][key] = {'item_id': item_id, 'values': values, 'tag': tag}
 
         # If no point-based symbols
         if not gap_spike_point_results:
@@ -3923,13 +4033,16 @@ class GapSpikeDetectorGUI:
                 tag = 'spike_detected'
 
             # Insert row with CONFIGURED thresholds
-            self.percent_tree.insert('', 'end', values=(
+            values = (
                 broker,
                 symbol,
                 f"{gap_threshold:.3f}",
                 f"{spike_threshold:.3f}",
                 status
-            ), tags=(tag,))
+            )
+            item_id = self.percent_tree.insert('', 'end', values=values, tags=(tag,))
+            # ⚡ Cache item for delta updates
+            tree_cache['percent'][key] = {'item_id': item_id, 'values': values, 'tag': tag}
 
         # If no percent-based symbols
         if not any(key not in gap_spike_point_results for key in gap_spike_results.keys()):
