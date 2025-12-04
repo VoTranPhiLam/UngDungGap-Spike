@@ -377,19 +377,36 @@ def load_gap_config_file():
         logger.error(f"Error loading {GAP_CONFIG_FILE}: {e}", exc_info=True)
         return {}
 
-def calculate_similarity(str1, str2):
+def check_5_char_match(str1, str2):
     """
-    Tính độ tương đồng giữa 2 chuỗi (0-100%)
-    Sử dụng SequenceMatcher của difflib
+    Kiểm tra xem có ít nhất 5 ký tự liên tiếp khớp nhau không
+    Logic đơn giản hơn để tránh lag khi so sánh với nhiều alias
 
     Args:
-        str1: Chuỗi thứ nhất
-        str2: Chuỗi thứ hai
+        str1: Chuỗi thứ nhất (symbol từ sàn)
+        str2: Chuỗi thứ hai (alias từ file txt)
 
     Returns:
-        float: Độ tương đồng từ 0.0 đến 1.0 (0% - 100%)
+        bool: True nếu có ít nhất 5 ký tự liên tiếp khớp nhau
     """
-    return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+    str1_lower = str1.lower()
+    str2_lower = str2.lower()
+
+    # Kiểm tra các substring 5 ký tự của str1 có xuất hiện trong str2 không
+    if len(str1_lower) >= 5:
+        for i in range(len(str1_lower) - 4):
+            substring = str1_lower[i:i+5]
+            if substring in str2_lower:
+                return True
+
+    # Kiểm tra ngược lại: các substring 5 ký tự của str2 có xuất hiện trong str1 không
+    if len(str2_lower) >= 5:
+        for i in range(len(str2_lower) - 4):
+            substring = str2_lower[i:i+5]
+            if substring in str1_lower:
+                return True
+
+    return False
 
 def find_symbol_config(symbol):
     """
@@ -398,8 +415,8 @@ def find_symbol_config(symbol):
     - Exact match (ưu tiên 1): So sánh chính xác 100%
     - Prefix match (ưu tiên 2): Tìm alias là prefix của symbol
       Ví dụ: BTCUSD.m, BTCUSD-spot, BTCUSD_futures đều match với BTCUSD
-    - Similarity match (ưu tiên 3): Tìm alias có độ tương đồng >= 70%
-      Ví dụ: BTCUSDT có thể match với BTCUSD nếu similarity >= 70%
+    - 5-char match (ưu tiên 3): Tìm alias có ít nhất 5 ký tự liên tiếp khớp nhau
+      Ví dụ: BTCUSDT có thể match với BTCUSD vì có 5 ký tự "BTCUS" khớp
 
     Args:
         symbol: Symbol name to search
@@ -461,17 +478,13 @@ def find_symbol_config(symbol):
         # Trả về alias từ file txt thay vì symbol từ sàn
         return best_match, config, best_matched_alias
 
-    # Bước 3: Thử similarity match (O(n) - fallback cuối cùng)
-    # Tìm alias có độ tương đồng >= 70%
-    best_similarity = 0.0
+    # Bước 3: Thử 5-char match (O(n) - fallback cuối cùng)
+    # Tìm alias có ít nhất 5 ký tự liên tiếp khớp nhau
     best_match = None
     best_matched_alias = None
-    SIMILARITY_THRESHOLD = 0.70  # 70%
 
     for alias_lower, symbol_chuan in gap_config_reverse_map.items():
-        similarity = calculate_similarity(symbol_lower, alias_lower)
-        if similarity >= SIMILARITY_THRESHOLD and similarity > best_similarity:
-            best_similarity = similarity
+        if check_5_char_match(symbol_lower, alias_lower):
             best_match = symbol_chuan
             # Tìm alias gốc (không lowercase) từ config
             config = gap_config[symbol_chuan]
@@ -481,10 +494,12 @@ def find_symbol_config(symbol):
                     break
             if not best_matched_alias:
                 best_matched_alias = symbol_chuan
+            # Tìm được match đầu tiên thì dừng ngay (không cần tìm best match)
+            break
 
     if best_match:
         config = gap_config[best_match]
-        logger.info(f"✅ Fuzzy match: '{symbol}' → '{best_matched_alias}' (similarity: {best_similarity*100:.1f}%)")
+        logger.info(f"✅ 5-char match: '{symbol}' → '{best_matched_alias}'")
         return best_match, config, best_matched_alias
 
     return None, None, None
