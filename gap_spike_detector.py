@@ -4205,7 +4205,7 @@ class GapSpikeDetectorGUI:
                     self.update_display()
             else:
                 # Click on other columns - open chart window
-                self.open_chart_window(broker, symbol)
+                self.open_chart(broker, symbol)
         except IndexError:
             pass
         except Exception as e:
@@ -4287,7 +4287,7 @@ class GapSpikeDetectorGUI:
                     self.update_display()
             else:
                 # Click on other columns - open chart window
-                self.open_chart_window(broker, symbol)
+                self.open_chart(broker, symbol)
         except IndexError:
             pass
         except Exception as e:
