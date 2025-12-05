@@ -1,43 +1,61 @@
 #!/usr/bin/env python3
 """
 Test script for subsequence matching logic
-Verify that the new is_subsequence_match() function works correctly
+Verify that the improved is_subsequence_match() function works correctly
 """
 
 import sys
+import re
 
-# Copy hàm is_subsequence_match để test độc lập
-def is_subsequence_match(str1, str2, min_length=5):
+# Copy hàm normalize_symbol và is_subsequence_match để test độc lập
+def normalize_symbol(symbol):
     """
-    Kiểm tra xem các ký tự có khớp theo thứ tự từ trái qua phải không (subsequence matching)
-    Ví dụ: "USTEC" là subsequence của "USTECH100" (U-S-T-E-C theo thứ tự)
-           "USTECH" KHÔNG phải subsequence của "HSTECH" (không có U ở đầu)
-
-    Args:
-        str1: Chuỗi thứ nhất (symbol từ sàn)
-        str2: Chuỗi thứ hai (alias từ file txt)
-        min_length: Số ký tự tối thiểu phải khớp (mặc định 5)
-
-    Returns:
-        bool: True nếu một chuỗi là subsequence của chuỗi kia với ít nhất min_length ký tự
+    Loại bỏ ký tự đặc biệt, chỉ giữ chữ và số
+    Ví dụ: "#RACE" → "RACE", "BTCUSD.m" → "BTCUSDm"
     """
-    str1_lower = str1.lower()
-    str2_lower = str2.lower()
+    return re.sub(r'[^a-zA-Z0-9]', '', symbol)
 
-    def is_subsequence(pattern, text):
-        """Kiểm tra pattern có phải subsequence của text không"""
+def is_subsequence_match(str1, str2, min_length=5, min_similarity=0.5):
+    """
+    Logic subsequence matching cải tiến với các điều kiện chặt chẽ hơn:
+    1. Normalize symbol (loại bỏ ký tự đặc biệt) trước khi so sánh
+    2. Yêu cầu khớp ít nhất min_length ký tự (default 5)
+    3. Yêu cầu tỷ lệ similarity tối thiểu (default 50%)
+    4. Yêu cầu ký tự đầu tiên phải khớp để tránh false positives
+    """
+    # Normalize: loại bỏ ký tự đặc biệt
+    norm1 = normalize_symbol(str1).lower()
+    norm2 = normalize_symbol(str2).lower()
+
+    if not norm1 or not norm2:
+        return False
+
+    def calculate_subsequence_match(pattern, text):
         if len(pattern) < min_length:
-            return False
+            return 0, 0.0
+
+        # Kiểm tra ký tự đầu tiên phải khớp
+        if pattern[0] != text[0]:
+            return 0, 0.0
 
         pattern_idx = 0
         for char in text:
             if pattern_idx < len(pattern) and char == pattern[pattern_idx]:
                 pattern_idx += 1
 
-        return pattern_idx >= min_length
+        matched_count = pattern_idx
+        max_len = max(len(pattern), len(text))
+        similarity = matched_count / max_len if max_len > 0 else 0.0
 
-    # Kiểm tra cả 2 chiều: str1 là subsequence của str2 hoặc ngược lại
-    return is_subsequence(str1_lower, str2_lower) or is_subsequence(str2_lower, str1_lower)
+        return matched_count, similarity
+
+    count1, sim1 = calculate_subsequence_match(norm1, norm2)
+    count2, sim2 = calculate_subsequence_match(norm2, norm1)
+
+    best_count = max(count1, count2)
+    best_similarity = max(sim1, sim2)
+
+    return best_count >= min_length and best_similarity >= min_similarity
 
 def test_subsequence_match():
     """Test various subsequence matching scenarios"""
@@ -57,11 +75,13 @@ def test_subsequence_match():
         ("NASDAQ100", "NAS100", True, "NAS100 là subsequence của NASDAQ100"),
 
         # Negative cases - should NOT match
-        ("HSTECH", "USTECH", False, "USTECH KHÔNG phải subsequence của HSTECH (không có U ở đầu)"),
+        ("#RACE", "France120", False, "RACE KHÔNG khớp với France (ký tự đầu khác nhau)"),
+        ("RACE", "France120", False, "RACE KHÔNG khớp với France (ký tự đầu khác nhau)"),
+        ("HSTECH", "USTECH", False, "USTECH KHÔNG phải subsequence của HSTECH (ký tự đầu khác nhau)"),
         ("USTECH", "HSTECH", False, "Kiểm tra chiều ngược lại"),
-        ("GOLD", "XAUUSD", False, "Không có ký tự nào khớp theo thứ tự"),
+        ("GOLD", "XAUUSD", False, "Ký tự đầu khác nhau (G vs X)"),
         ("ABC", "XYZ", False, "Hoàn toàn khác nhau"),
-        ("SHORT", "LONGER", False, "Không đủ 5 ký tự khớp theo thứ tự"),
+        ("SHORT", "LONGER", False, "Ký tự đầu khác nhau (S vs L)"),
 
         # Edge cases
         ("BTCUSD", "BTCUSD", True, "Exact match"),

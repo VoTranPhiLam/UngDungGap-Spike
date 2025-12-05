@@ -31,6 +31,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from concurrent.futures import ThreadPoolExecutor
 import difflib
+import re
 
 # ===================== CONFIGURATION =====================
 HTTP_PORT = 80
@@ -377,37 +378,85 @@ def load_gap_config_file():
         logger.error(f"Error loading {GAP_CONFIG_FILE}: {e}", exc_info=True)
         return {}
 
-def is_subsequence_match(str1, str2, min_length=5):
+def normalize_symbol(symbol):
     """
-    Kiểm tra xem các ký tự có khớp theo thứ tự từ trái qua phải không (subsequence matching)
-    Ví dụ: "USTEC" là subsequence của "USTECH100" (U-S-T-E-C theo thứ tự)
-           "USTECH" KHÔNG phải subsequence của "HSTECH" (không có U ở đầu)
+    Loại bỏ ký tự đặc biệt, chỉ giữ chữ và số
+    Ví dụ: "#RACE" → "RACE", "BTCUSD.m" → "BTCUSDm"
+
+    Args:
+        symbol: Symbol cần normalize
+
+    Returns:
+        str: Symbol đã được normalize (chỉ chứa chữ và số)
+    """
+    return re.sub(r'[^a-zA-Z0-9]', '', symbol)
+
+def is_subsequence_match(str1, str2, min_length=5, min_similarity=0.5):
+    """
+    Logic subsequence matching cải tiến với các điều kiện chặt chẽ hơn:
+    1. Normalize symbol (loại bỏ ký tự đặc biệt) trước khi so sánh
+    2. Yêu cầu khớp ít nhất min_length ký tự (default 5)
+    3. Yêu cầu tỷ lệ similarity tối thiểu (default 50%)
+    4. Yêu cầu ký tự đầu tiên phải khớp để tránh false positives
+       Ví dụ: "RACE" KHÔNG khớp với "France120" (ký tự đầu khác nhau)
+              "USTECH" KHÔNG khớp với "HSTECH" (ký tự đầu khác nhau)
 
     Args:
         str1: Chuỗi thứ nhất (symbol từ sàn)
         str2: Chuỗi thứ hai (alias từ file txt)
         min_length: Số ký tự tối thiểu phải khớp (mặc định 5)
+        min_similarity: Tỷ lệ similarity tối thiểu (mặc định 0.5 = 50%)
 
     Returns:
-        bool: True nếu một chuỗi là subsequence của chuỗi kia với ít nhất min_length ký tự
+        bool: True nếu khớp với tất cả điều kiện
     """
-    str1_lower = str1.lower()
-    str2_lower = str2.lower()
+    # Normalize: loại bỏ ký tự đặc biệt
+    norm1 = normalize_symbol(str1).lower()
+    norm2 = normalize_symbol(str2).lower()
 
-    def is_subsequence(pattern, text):
-        """Kiểm tra pattern có phải subsequence của text không"""
+    # Nếu sau khi normalize mà rỗng hoặc quá ngắn → không match
+    if not norm1 or not norm2:
+        return False
+
+    def calculate_subsequence_match(pattern, text):
+        """
+        Tính số ký tự khớp và tỷ lệ similarity
+        Returns: (matched_count, similarity_ratio)
+        """
         if len(pattern) < min_length:
-            return False
+            return 0, 0.0
+
+        # Kiểm tra ký tự đầu tiên phải khớp để tránh false positives
+        if pattern[0] != text[0]:
+            return 0, 0.0
 
         pattern_idx = 0
         for char in text:
             if pattern_idx < len(pattern) and char == pattern[pattern_idx]:
                 pattern_idx += 1
 
-        return pattern_idx >= min_length
+        matched_count = pattern_idx
 
-    # Kiểm tra cả 2 chiều: str1 là subsequence của str2 hoặc ngược lại
-    return is_subsequence(str1_lower, str2_lower) or is_subsequence(str2_lower, str1_lower)
+        # Tính tỷ lệ similarity dựa trên chuỗi dài hơn
+        # Để tránh false positive khi khớp ít ký tự trong chuỗi dài
+        # Ví dụ: "ABCDE" trong "AXXXBXXXCXXXDXXXE" → 5/17 = 29% (thấp, không khớp)
+        max_len = max(len(pattern), len(text))
+        similarity = matched_count / max_len if max_len > 0 else 0.0
+
+        return matched_count, similarity
+
+    # Kiểm tra cả 2 chiều
+    count1, sim1 = calculate_subsequence_match(norm1, norm2)
+    count2, sim2 = calculate_subsequence_match(norm2, norm1)
+
+    # Lấy kết quả tốt nhất
+    best_count = max(count1, count2)
+    best_similarity = max(sim1, sim2)
+
+    # Kiểm tra điều kiện:
+    # 1. Khớp ít nhất min_length ký tự
+    # 2. Tỷ lệ similarity >= min_similarity
+    return best_count >= min_length and best_similarity >= min_similarity
 
 def find_symbol_config(symbol):
     """
