@@ -37,12 +37,11 @@ import re
 HTTP_PORT = 80
 HTTP_HOST = '0.0.0.0'
 
-# Cấu hình logging
+# Cấu hình logging (chỉ hiển thị trên console, không lưu file)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('gap_spike_detector.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
