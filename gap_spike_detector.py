@@ -1449,7 +1449,14 @@ def save_symbol_filter_settings():
 
 # ===================== SYMBOL FILTER HELPERS =====================
 def is_symbol_selected_for_detection(broker, symbol):
-    """Return True if the symbol should be processed for Gap/Spike detection"""
+    """
+    Return True if the symbol should be processed for Gap/Spike detection
+
+    Hỗ trợ 2 mức độ matching:
+    1. Exact match: Symbol khớp chính xác với danh sách filter
+    2. Prefix match với gap_config: Symbol có prefix khớp với bất kỳ symbol nào trong file txt
+       Ví dụ: EURUSD.ra, EURUSD.m, GBPUSD_ra đều được chấp nhận nếu EURUSD, GBPUSD có trong file txt
+    """
     try:
         if not symbol_filter_settings.get('enabled', False):
             return True
@@ -1466,14 +1473,50 @@ def is_symbol_selected_for_detection(broker, symbol):
                 return False
             if not broker_symbols:
                 return False
-            return symbol in broker_symbols
+
+            # Level 1: Try exact match first (fast)
+            if symbol in broker_symbols:
+                return True
+
+            # Level 2: Try prefix matching with gap_config (fallback)
+            # Nếu symbol có suffix (như .ra, .m, _ra), kiểm tra xem prefix có trong gap_config không
+            # Điều này cho phép EURUSD.ra, GBPUSD.m được chấp nhận nếu EURUSD, GBPUSD có trong file txt
+            if gap_config:
+                symbol_lower = symbol.lower().strip()
+                # Normalize: loại bỏ các ký tự đặc biệt để get prefix
+                symbol_normalized = re.sub(r'[^a-zA-Z0-9]', '', symbol_lower)
+
+                # Kiểm tra xem normalized symbol có bắt đầu bằng bất kỳ symbol nào trong gap_config không
+                for config_symbol_lower in gap_config_reverse_map.keys():
+                    if symbol_normalized.startswith(config_symbol_lower):
+                        # Found prefix match - symbol này có trong file txt
+                        logger.info(f"✅ Symbol filter: '{symbol}' accepted via prefix match with '{config_symbol_lower}' in gap_config")
+                        return True
+
+            # Không match cả exact và prefix
+            return False
 
         # Fallback: wildcard '*' if provided
         wildcard_list = selection.get('*')
         if wildcard_list is not None:
             if not wildcard_list:
                 return False
-            return symbol in wildcard_list
+
+            # Level 1: Exact match
+            if symbol in wildcard_list:
+                return True
+
+            # Level 2: Prefix match with gap_config
+            if gap_config:
+                symbol_lower = symbol.lower().strip()
+                symbol_normalized = re.sub(r'[^a-zA-Z0-9]', '', symbol_lower)
+
+                for config_symbol_lower in gap_config_reverse_map.keys():
+                    if symbol_normalized.startswith(config_symbol_lower):
+                        logger.info(f"✅ Symbol filter (wildcard): '{symbol}' accepted via prefix match with '{config_symbol_lower}' in gap_config")
+                        return True
+
+            return False
 
         # Broker not configured → allow all symbols for that broker by default
         return True
