@@ -35,12 +35,37 @@ def main():
         "--name=GapSpikeDetector",
         "--onefile",
         "--windowed",
+        "--clean",  # Clean cache before building
         "--icon=icon.ico",  # Optional: add icon if you have one
-        "--add-data=*.json;.",
+
+        # Add data files (JSON configs and sounds)
+        "--add-data=delay_settings.json;.",
+        "--add-data=gap_settings.json;.",
+        "--add-data=manual_hidden_delays.json;.",
+        "--add-data=market_open_settings.json;.",
+        "--add-data=python_reset_settings.json;.",
+        "--add-data=screenshot_settings.json;.",
+        "--add-data=spike_settings.json;.",
+        "--add-data=symbol_filter_settings.json;.",
         "--add-data=sounds;sounds",  # Include sounds folder
+
+        # Hidden imports for dependencies
         "--hidden-import=PIL._tkinter_finder",
+        "--hidden-import=PIL.Image",
+        "--hidden-import=PIL.ImageTk",
+        "--hidden-import=google.oauth2.service_account",
+        "--hidden-import=google.auth.transport.requests",
+        "--hidden-import=gspread.auth",
+        "--hidden-import=playsound",
+
+        # Collect all packages (includes all sub-modules)
         "--collect-all=matplotlib",
         "--collect-all=flask",
+        "--collect-all=gspread",
+        "--collect-all=google.auth",
+        "--collect-all=google.oauth2",
+
+        # Main script
         "gap_spike_detector.py"
     ]
     
@@ -48,6 +73,13 @@ def main():
     if not os.path.exists("icon.ico"):
         cmd.remove("--icon=icon.ico")
         print("ℹ️  No icon.ico found - building without icon")
+
+    # Add credentials.json if exists (for Google Sheets integration)
+    if os.path.exists("credentials.json"):
+        cmd.insert(-1, "--add-data=credentials.json;.")
+        print("✅ credentials.json found - including Google Sheets support")
+    else:
+        print("⚠️  No credentials.json found - Google Sheets features may not work")
     
     try:
         subprocess.check_call(cmd)
