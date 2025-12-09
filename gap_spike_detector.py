@@ -6747,18 +6747,20 @@ class SettingsWindow:
         # Instructions
         inst_frame = ttk.LabelFrame(gs_frame, text="💡 Hướng dẫn", padding="5")
         inst_frame.pack(fill=tk.X, pady=5)
-        
-        instructions = """• Double-click cell để edit Gap/Spike threshold
-• Broker_*: Apply cho TẤT CẢ symbols của broker (VD: XM_*:0.01)
-• Symbol: Apply cho symbol từ TẤT CẢ brokers (VD: EURUSD:0.02)
-• *: Default cho tất cả (VD: *:0.01)
-• Để trống = sử dụng default"""
-        
+
+        instructions = """⚠️ QUAN TRỌNG: Thao tác nhanh CHỈ áp dụng cho BẢNG 2 (Percent-based - không match với file txt)
+• 📄 Point-based (File txt): Sản phẩm đã có cấu hình trong file THAM_SO_GAP_INDICATOR.txt → BỎ QUA
+• 📊 Percent-based (Table 2): Sản phẩm không match với file txt → SẼ ÁP DỤNG
+
+Cách sử dụng:
+• Double-click cell để edit Gap/Spike threshold từng sản phẩm
+• Thao tác nhanh: Áp dụng hàng loạt cho Bảng 2 (CHỈ áp dụng cho sản phẩm không có trong file txt)"""
+
         ttk.Label(inst_frame, text=instructions, justify=tk.LEFT, foreground='blue',
                  font=('Arial', 9)).pack(anchor=tk.W)
         
         # Quick actions
-        action_frame = ttk.LabelFrame(gs_frame, text="⚡ Thao tác nhanh - Cấu hình hàng loạt", padding="10")
+        action_frame = ttk.LabelFrame(gs_frame, text="⚡ Thao tác nhanh - CHỈ ÁP DỤNG CHO BẢNG 2 (Percent-based)", padding="10")
         action_frame.pack(fill=tk.X, pady=5)
 
         # Threshold inputs
@@ -7986,63 +7988,73 @@ class SettingsWindow:
             # Clear existing items
             for item in self.gs_tree.get_children():
                 self.gs_tree.delete(item)
-            
+
             # Get all unique broker_symbol from market_data
             symbols_set = set()
             brokers_set = set()
-            
+
             with data_lock:
                 for broker, symbols_dict in market_data.items():
                     brokers_set.add(broker)
                     for symbol in symbols_dict.keys():
                         symbols_set.add((broker, symbol))
-            
+
             # Update broker selector dropdown
             broker_list = sorted(list(brokers_set))
             self.broker_selector['values'] = broker_list
             if broker_list and not self.broker_selector_var.get():
                 self.broker_selector_var.set(broker_list[0])
-            
+
             # Update broker filter dropdown
             filter_list = ["All Brokers"] + broker_list
             self.broker_filter['values'] = filter_list
             if not self.broker_filter_var.get() or self.broker_filter_var.get() not in filter_list:
                 self.broker_filter_var.set("All Brokers")
-            
+
             # Get current filter
             current_filter = self.broker_filter_var.get()
-            
+
             # Sort by broker, then symbol
             sorted_symbols = sorted(symbols_set, key=lambda x: (x[0], x[1]))
-            
+
             # Add each symbol to tree (with filter)
             for broker, symbol in sorted_symbols:
                 # Apply filter
                 if current_filter != "All Brokers" and broker != current_filter:
                     continue
-                
+
                 key = f"{broker}_{symbol}"
-                
+
+                # ✨ Kiểm tra xem symbol có match với file txt không
+                symbol_chuan, config, matched_alias = find_symbol_config(symbol)
+                is_from_txt = (config is not None)  # True = Bảng 1 (Point-based), False = Bảng 2 (Percent-based)
+
                 # Get current thresholds
                 gap_threshold = self.get_threshold_for_display(broker, symbol, 'gap')
                 spike_threshold = self.get_threshold_for_display(broker, symbol, 'spike')
-                
-                # Determine source
-                gap_source = self.get_threshold_source(broker, symbol, 'gap')
-                spike_source = self.get_threshold_source(broker, symbol, 'spike')
-                
+
+                # Determine source with clear indicator
+                if is_from_txt:
+                    source_display = f"📄 Point-based (File txt: {symbol_chuan})"
+                else:
+                    gap_source = self.get_threshold_source(broker, symbol, 'gap')
+                    spike_source = self.get_threshold_source(broker, symbol, 'spike')
+                    source_display = f"📊 Percent-based (Table 2) | Gap: {gap_source}, Spike: {spike_source}"
+
                 # Display
                 gap_display = f"{gap_threshold:.3f}" if gap_threshold else ""
                 spike_display = f"{spike_threshold:.3f}" if spike_threshold else ""
-                source_display = f"Gap: {gap_source} | Spike: {spike_source}"
-                
+
+                # Use tags to mark table type (for filtering later)
+                tags = (key, 'point_based' if is_from_txt else 'percent_based')
+
                 self.gs_tree.insert('', 'end', values=(
                     broker,
                     symbol,
                     gap_display,
                     spike_display,
                     source_display
-                ), tags=(key,))
+                ), tags=tags)
             
             logger.info(f"Refreshed Gap/Spike list: {len(sorted_symbols)} symbols, {len(broker_list)} brokers, filter={current_filter}")
             
@@ -8149,53 +8161,76 @@ class SettingsWindow:
             messagebox.showerror("Error", f"Lỗi edit: {str(e)}")
     
     def apply_to_all(self):
-        """Apply threshold to all symbols from all brokers"""
+        """Apply threshold to all symbols from all brokers (CHỈ ÁP DỤNG CHO BẢNG 2 - PERCENT-BASED)"""
         try:
             gap_val = float(self.quick_gap_var.get())
             spike_val = float(self.quick_spike_var.get())
-            
-            # Count total symbols
-            total_count = len(self.gs_tree.get_children())
-            
-            # Count brokers
-            brokers_in_tree = set()
+
+            # ✨ Đếm CHỈ symbols từ Bảng 2 (Percent-based, không match với file txt)
+            percent_based_count = 0
+            point_based_count = 0
+            brokers_in_percent = set()
+
             for item in self.gs_tree.get_children():
-                values = self.gs_tree.item(item, 'values')
-                brokers_in_tree.add(values[0])
-            
+                tags = self.gs_tree.item(item, 'tags')
+                if 'percent_based' in tags:
+                    percent_based_count += 1
+                    values = self.gs_tree.item(item, 'values')
+                    brokers_in_percent.add(values[0])
+                elif 'point_based' in tags:
+                    point_based_count += 1
+
+            if percent_based_count == 0:
+                messagebox.showwarning(
+                    "Không có sản phẩm Bảng 2",
+                    "⚠️ Không có sản phẩm nào ở Bảng 2 (Percent-based) để áp dụng!\n\n"
+                    f"📄 Tất cả {point_based_count} sản phẩm đều match với file txt (Point-based)"
+                )
+                return
+
             confirm = messagebox.askyesno(
-                "Confirm - Apply to ALL",
-                f"🌐 Apply thresholds cho TẤT CẢ symbols từ TẤT CẢ brokers\n\n"
+                "Confirm - Apply to Table 2 ONLY",
+                f"📊 Apply thresholds cho BẢNG 2 (Percent-based)\n"
+                f"⚠️ CHỈ áp dụng cho sản phẩm KHÔNG match với file txt\n\n"
                 f"Gap Threshold: {gap_val}%\n"
                 f"Spike Threshold: {spike_val}%\n\n"
-                f"Số brokers: {len(brokers_in_tree)}\n"
-                f"Tổng số symbols: {total_count}\n\n"
+                f"📊 Bảng 2 (sẽ apply): {percent_based_count} symbols\n"
+                f"📄 Bảng 1 (bỏ qua): {point_based_count} symbols (Point-based từ file txt)\n"
+                f"Số brokers (Bảng 2): {len(brokers_in_percent)}\n\n"
                 f"Continue?"
             )
-            
+
             if confirm:
                 count = 0
+                skipped = 0
                 for item in self.gs_tree.get_children():
-                    values = list(self.gs_tree.item(item, 'values'))
-                    values[2] = f"{gap_val:.3f}"
-                    values[3] = f"{spike_val:.3f}"
-                    self.gs_tree.item(item, values=values)
-                    count += 1
-                
+                    tags = self.gs_tree.item(item, 'tags')
+
+                    # ✨ CHỈ áp dụng cho symbols Percent-based (Bảng 2)
+                    if 'percent_based' in tags:
+                        values = list(self.gs_tree.item(item, 'values'))
+                        values[2] = f"{gap_val:.3f}"
+                        values[3] = f"{spike_val:.3f}"
+                        self.gs_tree.item(item, values=values)
+                        count += 1
+                    elif 'point_based' in tags:
+                        skipped += 1
+
                 # Tự động lưu luôn (không hiện messagebox)
                 self.save_gap_spike_from_tree(show_message=False)
-                
-                messagebox.showinfo("Success", 
-                                  f"✅ Đã apply và LƯU thresholds cho TẤT CẢ\n\n"
-                                  f"Brokers: {len(brokers_in_tree)}\n"
-                                  f"Symbols: {count}\n"
+
+                messagebox.showinfo("Success",
+                                  f"✅ Đã apply và LƯU thresholds cho BẢNG 2\n\n"
+                                  f"📊 Applied: {count} symbols (Percent-based)\n"
+                                  f"📄 Skipped: {skipped} symbols (Point-based từ file txt)\n"
+                                  f"Brokers: {len(brokers_in_percent)}\n"
                                   f"Gap: {gap_val}%\n"
                                   f"Spike: {spike_val}%\n\n"
                                   f"💾 Settings đã được lưu tự động!")
-                
-                self.main_app.log(f"🌐 Applied & Saved Gap:{gap_val}%, Spike:{spike_val}% to ALL ({count} symbols)")
-                logger.info(f"Applied & Saved Gap:{gap_val}%, Spike:{spike_val}% to all: {count} symbols")
-            
+
+                self.main_app.log(f"📊 Applied & Saved Gap:{gap_val}%, Spike:{spike_val}% to Table 2 ({count} symbols, skipped {skipped} Point-based)")
+                logger.info(f"Applied & Saved Gap:{gap_val}%, Spike:{spike_val}% to Table 2 only: {count} symbols (skipped {skipped} Point-based)")
+
         except ValueError:
             messagebox.showerror("Error", "Invalid number format - vui lòng nhập số hợp lệ")
         except Exception as e:
@@ -8242,59 +8277,78 @@ class SettingsWindow:
             messagebox.showerror("Error", f"Lỗi: {str(e)}")
     
     def apply_to_selected_broker_from_dropdown(self):
-        """Apply threshold to all symbols from broker selected in dropdown"""
+        """Apply threshold to all symbols from broker selected in dropdown (CHỈ ÁP DỤNG CHO BẢNG 2)"""
         try:
             broker = self.broker_selector_var.get()
             if not broker:
                 messagebox.showwarning("No Selection", "Vui lòng chọn broker từ dropdown")
                 return
-            
+
             gap_val = float(self.quick_gap_var.get())
             spike_val = float(self.quick_spike_var.get())
-            
-            # Count symbols for this broker
-            count_preview = 0
+
+            # ✨ Đếm CHỈ symbols từ Bảng 2 (Percent-based) cho broker này
+            percent_count = 0
+            point_count = 0
             for item in self.gs_tree.get_children():
                 item_values = self.gs_tree.item(item, 'values')
+                tags = self.gs_tree.item(item, 'tags')
                 if item_values[0] == broker:
-                    count_preview += 1
-            
-            if count_preview == 0:
-                messagebox.showwarning("No Symbols", f"Không có symbols nào từ broker {broker}")
+                    if 'percent_based' in tags:
+                        percent_count += 1
+                    elif 'point_based' in tags:
+                        point_count += 1
+
+            if percent_count == 0:
+                messagebox.showwarning(
+                    "Không có sản phẩm Bảng 2",
+                    f"⚠️ Broker {broker} không có sản phẩm nào ở Bảng 2 (Percent-based)!\n\n"
+                    f"📄 Tất cả {point_count} sản phẩm đều match với file txt (Point-based)"
+                )
                 return
-            
+
             confirm = messagebox.askyesno(
-                "Confirm - Apply to Broker",
-                f"📊 Apply thresholds cho broker: {broker}\n\n"
+                "Confirm - Apply to Broker (Table 2 ONLY)",
+                f"📊 Apply thresholds cho broker: {broker}\n"
+                f"⚠️ CHỈ áp dụng cho sản phẩm KHÔNG match với file txt\n\n"
                 f"Gap Threshold: {gap_val}%\n"
                 f"Spike Threshold: {spike_val}%\n\n"
-                f"Số symbols sẽ được update: {count_preview}\n\n"
+                f"📊 Bảng 2 (sẽ apply): {percent_count} symbols\n"
+                f"📄 Bảng 1 (bỏ qua): {point_count} symbols (Point-based từ file txt)\n\n"
                 f"Continue?"
             )
-            
+
             if confirm:
                 count = 0
+                skipped = 0
                 for item in self.gs_tree.get_children():
                     item_values = list(self.gs_tree.item(item, 'values'))
+                    tags = self.gs_tree.item(item, 'tags')
+
                     if item_values[0] == broker:
-                        item_values[2] = f"{gap_val:.3f}"
-                        item_values[3] = f"{spike_val:.3f}"
-                        self.gs_tree.item(item, values=item_values)
-                        count += 1
-                
+                        # ✨ CHỈ áp dụng cho symbols Percent-based (Bảng 2)
+                        if 'percent_based' in tags:
+                            item_values[2] = f"{gap_val:.3f}"
+                            item_values[3] = f"{spike_val:.3f}"
+                            self.gs_tree.item(item, values=item_values)
+                            count += 1
+                        elif 'point_based' in tags:
+                            skipped += 1
+
                 # Tự động lưu luôn (không hiện messagebox)
                 self.save_gap_spike_from_tree(show_message=False)
-                
-                messagebox.showinfo("Success", 
+
+                messagebox.showinfo("Success",
                                   f"✅ Đã apply và LƯU thresholds cho broker {broker}\n\n"
-                                  f"Updated: {count} symbols\n"
+                                  f"📊 Applied: {count} symbols (Percent-based)\n"
+                                  f"📄 Skipped: {skipped} symbols (Point-based từ file txt)\n"
                                   f"Gap: {gap_val}%\n"
                                   f"Spike: {spike_val}%\n\n"
                                   f"💾 Settings đã được lưu tự động!")
-                
-                self.main_app.log(f"📊 Applied & Saved Gap:{gap_val}%, Spike:{spike_val}% to broker {broker} ({count} symbols)")
-                logger.info(f"Applied & Saved thresholds to broker {broker}: {count} symbols")
-            
+
+                self.main_app.log(f"📊 Applied & Saved Gap:{gap_val}%, Spike:{spike_val}% to broker {broker} Table 2 ({count} symbols, skipped {skipped} Point-based)")
+                logger.info(f"Applied & Saved thresholds to broker {broker} Table 2 only: {count} symbols (skipped {skipped} Point-based)")
+
         except ValueError:
             messagebox.showerror("Error", "Invalid number format - vui lòng nhập số hợp lệ")
         except Exception as e:
@@ -8302,53 +8356,66 @@ class SettingsWindow:
             messagebox.showerror("Error", f"Lỗi: {str(e)}")
     
     def save_gap_spike_from_tree(self, show_message=True):
-        """Save Gap/Spike settings from treeview"""
+        """Save Gap/Spike settings from treeview (CHỈ LƯU BẢNG 2 - PERCENT-BASED)"""
         global gap_settings, spike_settings
         try:
             new_gap_settings = {}
             new_spike_settings = {}
-            
+            saved_count = 0
+            skipped_count = 0
+
             for item in self.gs_tree.get_children():
+                tags = self.gs_tree.item(item, 'tags')
+
+                # ✨ CHỈ lưu symbols từ Bảng 2 (Percent-based)
+                if 'percent_based' not in tags:
+                    skipped_count += 1
+                    continue
+
                 values = self.gs_tree.item(item, 'values')
                 broker = values[0]
                 symbol = values[1]
                 gap_str = values[2]
                 spike_str = values[3]
-                
+
                 key = f"{broker}_{symbol}"
-                
+
                 # Save Gap if has value
                 if gap_str and gap_str.strip():
                     try:
                         new_gap_settings[key] = float(gap_str)
                     except ValueError:
                         pass
-                
+
                 # Save Spike if has value
                 if spike_str and spike_str.strip():
                     try:
                         new_spike_settings[key] = float(spike_str)
                     except ValueError:
                         pass
-            
+
+                saved_count += 1
+
             # Update global settings
             gap_settings = new_gap_settings
             spike_settings = new_spike_settings
-            
+
             # Save to files
             save_gap_settings()
             save_spike_settings()
-            
+
             if show_message:
-                messagebox.showinfo("Success", 
-                                  f"Đã lưu:\n"
-                                  f"- Gap: {len(gap_settings)} configs\n"
-                                  f"- Spike: {len(spike_settings)} configs")
-            
-            self.main_app.log(f"⚙️ Saved Gap/Spike settings: "
-                            f"Gap={len(gap_settings)}, Spike={len(spike_settings)}")
-            logger.info(f"Gap/Spike settings saved from tree")
-            
+                messagebox.showinfo("Success",
+                                  f"✅ Đã lưu (CHỈ BẢNG 2 - Percent-based):\n\n"
+                                  f"📊 Saved: {saved_count} symbols (Percent-based)\n"
+                                  f"📄 Skipped: {skipped_count} symbols (Point-based từ file txt)\n\n"
+                                  f"- Gap configs: {len(gap_settings)}\n"
+                                  f"- Spike configs: {len(spike_settings)}")
+
+            self.main_app.log(f"⚙️ Saved Gap/Spike settings (Table 2 only): "
+                            f"Gap={len(gap_settings)}, Spike={len(spike_settings)}, Saved={saved_count}, Skipped={skipped_count}")
+            logger.info(f"Gap/Spike settings saved from tree (Table 2 only): saved={saved_count}, skipped={skipped_count} Point-based")
+
         except Exception as e:
             logger.error(f"Error saving from tree: {e}")
             if show_message:
