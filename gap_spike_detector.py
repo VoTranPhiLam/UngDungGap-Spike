@@ -98,6 +98,11 @@ delay_settings = {
 # Example: {"RadexMarkets-Live_XAUUSD": 10}
 product_delay_settings = {}
 
+# Hidden products list (products user wants to hide from delay management)
+# Format: ["broker_symbol", ...]
+# Example: ["RadexMarkets-Live_XAUUSD", "FXPrimus-Server_EURUSD"]
+hidden_products = []
+
 screenshot_settings = {
     'enabled': True,  # Auto screenshot when gap/spike detected
     'save_gap': True,  # Save screenshot for gap
@@ -1737,6 +1742,28 @@ def save_product_delay_settings():
         logger.info(f"Saved product delay settings: {len(product_delay_settings)} products configured")
     except Exception as e:
         logger.error(f"Error saving product delay settings: {e}")
+
+def load_hidden_products():
+    """Load hidden products list from JSON file"""
+    global hidden_products
+    try:
+        if os.path.exists('hidden_products.json'):
+            with open('hidden_products.json', 'r', encoding='utf-8') as f:
+                hidden_products = json.load(f)
+            logger.info(f"Loaded hidden products: {len(hidden_products)} products hidden")
+        else:
+            logger.info("No hidden_products.json found, using defaults")
+    except Exception as e:
+        logger.error(f"Error loading hidden products: {e}")
+
+def save_hidden_products():
+    """Save hidden products list to JSON file"""
+    try:
+        with open('hidden_products.json', 'w', encoding='utf-8') as f:
+            json.dump(hidden_products, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved hidden products: {len(hidden_products)} products hidden")
+    except Exception as e:
+        logger.error(f"Error saving hidden products: {e}")
 
 def load_screenshot_settings():
     """Load screenshot settings from JSON file"""
@@ -6143,9 +6170,9 @@ class SettingsWindow:
         inst_frame.pack(fill=tk.X, pady=5)
 
         instructions = """• Tìm kiếm sản phẩm theo tên hoặc lọc theo sàn
-• Chọn một hoặc nhiều sản phẩm (Ctrl+Click hoặc Shift+Click)
-• Nhập thời gian delay (phút) và nhấn "Áp dụng" để thiết lập
-• Delay tùy chỉnh sẽ ghi đè ngưỡng delay mặc định"""
+• Double-click vào cột "Delay (phút)" để chỉnh trực tiếp thời gian delay
+• Click chuột phải vào sản phẩm để mở menu: chỉnh delay hoặc ẩn sản phẩm
+• Delay tùy chỉnh sẽ được lưu tự động và ghi đè ngưỡng delay mặc định"""
 
         ttk.Label(inst_frame, text=instructions, justify=tk.LEFT, foreground='blue',
                  font=('Arial', 9)).pack(anchor=tk.W)
@@ -6173,6 +6200,10 @@ class SettingsWindow:
         ttk.Button(search_frame, text="🔄 Làm mới",
                   command=self.refresh_product_delay_list).pack(side=tk.LEFT, padx=5)
 
+        # Hidden products button
+        ttk.Button(search_frame, text="👁️ Sản phẩm bị ẩn",
+                  command=self.show_hidden_products).pack(side=tk.LEFT, padx=5)
+
         # Product list frame
         list_frame = ttk.LabelFrame(pdm_frame, text="📋 Danh sách sản phẩm", padding="5")
         list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -6188,9 +6219,9 @@ class SettingsWindow:
         hsb.pack(side=tk.BOTTOM, fill=tk.X)
 
         # Treeview
-        columns = ('Broker', 'Symbol', 'Type', 'Current Delay (min)', 'Status')
+        columns = ('Broker', 'Symbol', 'Delay')
         self.pdm_tree = ttk.Treeview(tree_scroll_frame, columns=columns, show='headings',
-                                     height=15, selectmode='extended',
+                                     height=15, selectmode='browse',
                                      yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         vsb.config(command=self.pdm_tree.yview)
@@ -6198,42 +6229,19 @@ class SettingsWindow:
 
         self.pdm_tree.heading('Broker', text='Sàn')
         self.pdm_tree.heading('Symbol', text='Sản phẩm')
-        self.pdm_tree.heading('Type', text='Loại')
-        self.pdm_tree.heading('Current Delay (min)', text='Delay hiện tại (phút)')
-        self.pdm_tree.heading('Status', text='Trạng thái')
+        self.pdm_tree.heading('Delay', text='Delay (phút)')
 
-        self.pdm_tree.column('Broker', width=120)
-        self.pdm_tree.column('Symbol', width=120)
-        self.pdm_tree.column('Type', width=80)
-        self.pdm_tree.column('Current Delay (min)', width=150)
-        self.pdm_tree.column('Status', width=200)
+        self.pdm_tree.column('Broker', width=200)
+        self.pdm_tree.column('Symbol', width=150)
+        self.pdm_tree.column('Delay', width=150)
 
         self.pdm_tree.pack(fill=tk.BOTH, expand=True)
 
-        # Action frame
-        action_frame = ttk.LabelFrame(pdm_frame, text="⚡ Thao tác", padding="10")
-        action_frame.pack(fill=tk.X, pady=5)
+        # Bind double-click for inline editing
+        self.pdm_tree.bind('<Double-1>', self.on_delay_cell_double_click)
 
-        # Delay input
-        input_row = ttk.Frame(action_frame)
-        input_row.pack(fill=tk.X, pady=5)
-
-        ttk.Label(input_row, text="Thời gian delay (phút):", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
-        self.pdm_delay_var = tk.IntVar(value=5)
-        ttk.Spinbox(input_row, from_=1, to=120, textvariable=self.pdm_delay_var,
-                   width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Label(input_row, text="(1-120 phút)", foreground='gray').pack(side=tk.LEFT, padx=5)
-
-        # Buttons row
-        button_row = ttk.Frame(action_frame)
-        button_row.pack(fill=tk.X, pady=5)
-
-        ttk.Button(button_row, text="✅ Áp dụng cho sản phẩm đã chọn",
-                  command=self.apply_delay_to_selected_products).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_row, text="🗑️ Xóa delay tùy chỉnh",
-                  command=self.remove_delay_from_selected_products).pack(side=tk.LEFT, padx=5)
-        ttk.Label(button_row, text="(Ctrl+Click hoặc Shift+Click để chọn nhiều)",
-                 foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=10)
+        # Bind right-click for context menu
+        self.pdm_tree.bind('<Button-3>', self.show_product_context_menu)
 
         # Info label
         self.pdm_info_label = ttk.Label(pdm_frame, text="", foreground='blue', font=('Arial', 9))
@@ -6290,24 +6298,22 @@ class SettingsWindow:
                         continue
 
                     key = f"{broker}_{symbol}"
-                    custom_delay = product_delay_settings.get(key, None)
 
-                    # Get product type (simplified)
-                    product_type = "Forex" if len(symbol) == 6 else "CFD"
+                    # Skip hidden products
+                    if key in hidden_products:
+                        continue
+
+                    custom_delay = product_delay_settings.get(key, None)
 
                     if custom_delay is not None:
                         delay_display = f"{custom_delay}"
-                        status = "✅ Tùy chỉnh"
                     else:
-                        delay_display = f"Mặc định ({delay_settings['threshold'] // 60})"
-                        status = "⚪ Mặc định"
+                        delay_display = f"{delay_settings['threshold'] // 60}"
 
                     all_products.append({
                         'broker': broker,
                         'symbol': symbol,
-                        'type': product_type,
-                        'delay': delay_display,
-                        'status': status
+                        'delay': delay_display
                     })
 
             # Sort by broker, then symbol
@@ -6318,9 +6324,7 @@ class SettingsWindow:
                 self.pdm_tree.insert('', 'end', values=(
                     product['broker'],
                     product['symbol'],
-                    product['type'],
-                    product['delay'],
-                    product['status']
+                    product['delay']
                 ))
 
         except Exception as e:
@@ -6418,6 +6422,281 @@ class SettingsWindow:
         except Exception as e:
             logger.error(f"Error removing delay: {e}")
             messagebox.showerror("Error", f"Lỗi xóa delay: {str(e)}")
+
+    def on_delay_cell_double_click(self, event):
+        """Handle double-click on delay cell for inline editing"""
+        try:
+            # Get selected item
+            item = self.pdm_tree.identify('item', event.x, event.y)
+            column = self.pdm_tree.identify_column(event.x)
+
+            if not item or column != '#3':  # Only allow editing on Delay column
+                return
+
+            # Get item values
+            values = self.pdm_tree.item(item, 'values')
+            broker = values[0]
+            symbol = values[1]
+            current_delay = values[2]
+
+            # Get current delay value (strip default text if any)
+            try:
+                current_value = int(current_delay)
+            except:
+                current_value = delay_settings['threshold'] // 60
+
+            # Show input dialog
+            new_delay = simpledialog.askinteger(
+                "Chỉnh Delay",
+                f"Nhập thời gian delay cho {broker} - {symbol}:\n(1-120 phút)",
+                initialvalue=current_value,
+                minvalue=1,
+                maxvalue=120,
+                parent=self.main_app.root
+            )
+
+            if new_delay is not None:
+                # Update delay settings
+                key = f"{broker}_{symbol}"
+                product_delay_settings[key] = new_delay
+
+                # Save to file
+                save_product_delay_settings()
+
+                # Update display
+                self.pdm_tree.set(item, 'Delay', str(new_delay))
+
+                self.main_app.log(f"⏱️ Updated delay for {broker}_{symbol}: {new_delay} minutes")
+                logger.info(f"Updated delay for {broker}_{symbol}: {new_delay} minutes")
+
+        except Exception as e:
+            logger.error(f"Error editing delay: {e}")
+            messagebox.showerror("Error", f"Lỗi chỉnh delay: {str(e)}")
+
+    def show_product_context_menu(self, event):
+        """Show context menu on right-click"""
+        try:
+            # Get selected item
+            item = self.pdm_tree.identify_row(event.y)
+            if not item:
+                return
+
+            # Select the item
+            self.pdm_tree.selection_set(item)
+
+            # Get item values
+            values = self.pdm_tree.item(item, 'values')
+            broker = values[0]
+            symbol = values[1]
+
+            # Create context menu
+            context_menu = tk.Menu(self.main_app.root, tearoff=0)
+            context_menu.add_command(
+                label=f"⚙️ Chỉnh delay cho {symbol}",
+                command=lambda: self.edit_product_delay_from_menu(item, broker, symbol)
+            )
+            context_menu.add_separator()
+            context_menu.add_command(
+                label=f"👁️ Ẩn {symbol}",
+                command=lambda: self.hide_product(broker, symbol)
+            )
+
+            # Show menu
+            context_menu.post(event.x_root, event.y_root)
+
+        except Exception as e:
+            logger.error(f"Error showing context menu: {e}")
+
+    def edit_product_delay_from_menu(self, item, broker, symbol):
+        """Edit product delay from context menu"""
+        try:
+            # Get current delay
+            values = self.pdm_tree.item(item, 'values')
+            current_delay = values[2]
+
+            # Get current delay value
+            try:
+                current_value = int(current_delay)
+            except:
+                current_value = delay_settings['threshold'] // 60
+
+            # Show input dialog
+            new_delay = simpledialog.askinteger(
+                "Chỉnh Delay",
+                f"Nhập thời gian delay cho {broker} - {symbol}:\n(1-120 phút)",
+                initialvalue=current_value,
+                minvalue=1,
+                maxvalue=120,
+                parent=self.main_app.root
+            )
+
+            if new_delay is not None:
+                # Update delay settings
+                key = f"{broker}_{symbol}"
+                product_delay_settings[key] = new_delay
+
+                # Save to file
+                save_product_delay_settings()
+
+                # Update display
+                self.pdm_tree.set(item, 'Delay', str(new_delay))
+
+                self.main_app.log(f"⏱️ Updated delay for {broker}_{symbol}: {new_delay} minutes")
+                logger.info(f"Updated delay for {broker}_{symbol}: {new_delay} minutes")
+
+        except Exception as e:
+            logger.error(f"Error editing delay from menu: {e}")
+            messagebox.showerror("Error", f"Lỗi chỉnh delay: {str(e)}")
+
+    def hide_product(self, broker, symbol):
+        """Hide product from delay management"""
+        try:
+            key = f"{broker}_{symbol}"
+
+            # Confirm with user
+            confirm = messagebox.askyesno(
+                "Xác nhận",
+                f"Ẩn sản phẩm {broker} - {symbol}?\n\nBạn có thể hiển thị lại bằng cách xem danh sách sản phẩm bị ẩn."
+            )
+
+            if not confirm:
+                return
+
+            # Add to hidden list
+            if key not in hidden_products:
+                hidden_products.append(key)
+
+                # Save to file
+                save_hidden_products()
+
+                # Refresh display
+                self.filter_product_delay_list()
+                self.refresh_product_delay_list()
+
+                self.main_app.log(f"👁️ Hidden product: {broker}_{symbol}")
+                logger.info(f"Hidden product: {broker}_{symbol}")
+
+                messagebox.showinfo("Success", f"✅ Đã ẩn sản phẩm {broker} - {symbol}")
+
+        except Exception as e:
+            logger.error(f"Error hiding product: {e}")
+            messagebox.showerror("Error", f"Lỗi ẩn sản phẩm: {str(e)}")
+
+    def show_hidden_products(self):
+        """Show dialog with list of hidden products"""
+        try:
+            if not hidden_products:
+                messagebox.showinfo("Thông tin", "Không có sản phẩm nào bị ẩn.")
+                return
+
+            # Create dialog window
+            dialog = tk.Toplevel(self.main_app.root)
+            dialog.title("Danh sách sản phẩm bị ẩn")
+            dialog.geometry("600x400")
+            dialog.transient(self.main_app.root)
+            dialog.grab_set()
+
+            # Title
+            ttk.Label(dialog, text="Sản phẩm bị ẩn", font=('Arial', 12, 'bold')).pack(pady=10)
+
+            # Info
+            ttk.Label(dialog, text=f"Tổng số: {len(hidden_products)} sản phẩm",
+                     foreground='blue').pack(pady=5)
+
+            # List frame
+            list_frame = ttk.Frame(dialog)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+            # Scrollbar
+            scrollbar = ttk.Scrollbar(list_frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            # Listbox
+            listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=('Arial', 10))
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=listbox.yview)
+
+            # Populate listbox
+            for product_key in sorted(hidden_products):
+                # Format: "Broker - Symbol"
+                parts = product_key.split('_', 1)
+                if len(parts) == 2:
+                    display_text = f"{parts[0]} - {parts[1]}"
+                else:
+                    display_text = product_key
+                listbox.insert(tk.END, display_text)
+
+            # Button frame
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            def unhide_selected():
+                """Unhide selected product"""
+                selection = listbox.curselection()
+                if not selection:
+                    messagebox.showwarning("Warning", "Vui lòng chọn sản phẩm để hiển thị lại!")
+                    return
+
+                index = selection[0]
+                product_key = sorted(hidden_products)[index]
+
+                # Remove from hidden list
+                hidden_products.remove(product_key)
+
+                # Save to file
+                save_hidden_products()
+
+                # Update listbox
+                listbox.delete(index)
+
+                # Refresh main display
+                self.filter_product_delay_list()
+                self.refresh_product_delay_list()
+
+                self.main_app.log(f"👁️ Unhidden product: {product_key}")
+                logger.info(f"Unhidden product: {product_key}")
+
+                # Close dialog if no more hidden products
+                if not hidden_products:
+                    messagebox.showinfo("Thông báo", "Đã hiển thị lại tất cả sản phẩm.")
+                    dialog.destroy()
+
+            def unhide_all():
+                """Unhide all products"""
+                confirm = messagebox.askyesno(
+                    "Xác nhận",
+                    f"Hiển thị lại tất cả {len(hidden_products)} sản phẩm?"
+                )
+
+                if not confirm:
+                    return
+
+                # Clear hidden list
+                hidden_products.clear()
+
+                # Save to file
+                save_hidden_products()
+
+                # Refresh main display
+                self.filter_product_delay_list()
+                self.refresh_product_delay_list()
+
+                self.main_app.log(f"👁️ Unhidden all products")
+                logger.info(f"Unhidden all products")
+
+                messagebox.showinfo("Thành công", "✅ Đã hiển thị lại tất cả sản phẩm!")
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="✅ Hiển thị lại sản phẩm đã chọn",
+                      command=unhide_selected).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="🔄 Hiển thị lại tất cả",
+                      command=unhide_all).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="❌ Đóng",
+                      command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error showing hidden products: {e}")
+            messagebox.showerror("Error", f"Lỗi hiển thị sản phẩm bị ẩn: {str(e)}")
 
     def create_gap_spike_settings_tab(self):
         """Create Gap/Spike Settings tab with visual editor"""
@@ -10570,6 +10849,7 @@ def main():
     load_symbol_filter_settings()
     load_delay_settings()
     load_product_delay_settings()
+    load_hidden_products()
     load_screenshot_settings()
     load_market_open_settings()
     load_auto_send_settings()
