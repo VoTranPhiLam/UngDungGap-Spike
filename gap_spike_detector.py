@@ -298,6 +298,7 @@ def perform_pending_writes():
 # Cấu hình Gap/Spike từ file THAM_SO_GAP_INDICATOR.txt
 gap_config = {}  # {symbol_chuan: {aliases: [...], default_gap_percent: float, custom_gap: int}}
 gap_config_reverse_map = {}  # {alias_lower: symbol_chuan} - for fast lookup
+symbol_config_cache = {}  # {symbol: (symbol_chuan, config, matched_alias)} - cache matching results
 GAP_CONFIG_FILE = 'THAM_SO_GAP_INDICATOR.txt'
 
 # Results for symbols with Point-based calculation
@@ -322,7 +323,10 @@ def load_gap_config_file():
     Returns:
         dict: gap_config dictionary
     """
-    global gap_config, gap_config_reverse_map
+    global gap_config, gap_config_reverse_map, symbol_config_cache
+
+    # ✅ Clear cache khi reload config (để dò lại sản phẩm)
+    symbol_config_cache.clear()
 
     if not os.path.exists(GAP_CONFIG_FILE):
         logger.warning(f"File {GAP_CONFIG_FILE} không tồn tại. Hệ thống sẽ dùng tính toán Gap/Spike theo % cho tất cả symbols.")
@@ -490,6 +494,10 @@ def find_symbol_config(symbol):
     if not gap_config:
         return None, None, None
 
+    # ✅ Check cache first (để tránh matching lại mỗi lần)
+    if symbol in symbol_config_cache:
+        return symbol_config_cache[symbol]
+
     symbol_lower = symbol.lower().strip()
 
     # Bước 1: Thử exact match (O(1) - very fast)
@@ -510,7 +518,10 @@ def find_symbol_config(symbol):
             else:
                 matched_alias = symbol_chuan  # Fallback
 
-        return symbol_chuan, config, matched_alias
+        # ✅ Lưu vào cache trước khi return
+        result = (symbol_chuan, config, matched_alias)
+        symbol_config_cache[symbol] = result
+        return result
 
     # Bước 2: Thử prefix match (O(n) where n = số aliases)
     # Tìm alias dài nhất là prefix của symbol để tránh false positive
@@ -535,8 +546,10 @@ def find_symbol_config(symbol):
 
     if best_match:
         config = gap_config[best_match]
-        # Trả về alias từ file txt thay vì symbol từ sàn
-        return best_match, config, best_matched_alias
+        # ✅ Lưu vào cache trước khi return
+        result = (best_match, config, best_matched_alias)
+        symbol_config_cache[symbol] = result
+        return result
 
     # Bước 3: Thử subsequence match (O(n) - fallback cuối cùng)
     # Tìm alias có ít nhất 5 ký tự khớp theo thứ tự từ trái qua phải
@@ -559,10 +572,17 @@ def find_symbol_config(symbol):
 
     if best_match:
         config = gap_config[best_match]
+        # ✅ Chỉ log lần đầu tiên tìm thấy subsequence match (chưa có trong cache)
         logger.info(f"✅ Subsequence match: '{symbol}' → '{best_matched_alias}'")
-        return best_match, config, best_matched_alias
+        # ✅ Lưu vào cache trước khi return
+        result = (best_match, config, best_matched_alias)
+        symbol_config_cache[symbol] = result
+        return result
 
-    return None, None, None
+    # ✅ Cache cả trường hợp không tìm thấy để tránh tìm lại
+    result = (None, None, None)
+    symbol_config_cache[symbol] = result
+    return result
 
 def calculate_gap_point(symbol, broker, data, spread_percent=None):
     """
@@ -4807,6 +4827,12 @@ class GapSpikeDetectorGUI:
                 alert_board.clear()
                 bid_tracking.clear()
                 # candle_data.clear()  # ← KHÔNG xóa để giữ lại chart data
+
+                # ✅ Clear symbol config cache chỉ khi manual reset (để dò lại sản phẩm)
+                # Auto reset sẽ KHÔNG clear cache (không dò lại sản phẩm)
+                if reason == "manual":
+                    symbol_config_cache.clear()
+                    self.log("🔍 Đã clear cache matching - sẽ dò lại sản phẩm khi nhận data mới")
 
             self.tree.delete(*self.tree.get_children())
             self.alert_tree.delete(*self.alert_tree.get_children())
