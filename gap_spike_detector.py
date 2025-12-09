@@ -5778,6 +5778,58 @@ class GapSpikeDetectorGUI:
             # Create context menu
             context_menu = tk.Menu(self.root, tearoff=0)
 
+            key = f"{broker}_{symbol}"
+
+            # ⚙️ Gap/Spike Settings
+            # Determine if this is point-based or percent-based
+            is_point_based = False
+            if key in custom_thresholds:
+                if 'gap_point' in custom_thresholds[key] or 'spike_point' in custom_thresholds[key]:
+                    is_point_based = True
+            elif key in gap_spike_point_results:
+                is_point_based = True
+
+            # Get current thresholds for display
+            if is_point_based:
+                gap_threshold = custom_thresholds.get(key, {}).get('gap_point')
+                spike_threshold = custom_thresholds.get(key, {}).get('spike_point')
+                threshold_label = f"⚙️ Chỉnh Gap/Spike Point"
+                if gap_threshold is not None or spike_threshold is not None:
+                    threshold_label += f" (Gap: {gap_threshold if gap_threshold else '-'} | Spike: {spike_threshold if spike_threshold else '-'})"
+            else:
+                gap_threshold = gap_settings.get(key)
+                spike_threshold = spike_settings.get(key)
+                threshold_label = f"⚙️ Chỉnh Gap/Spike %"
+                if gap_threshold is not None or spike_threshold is not None:
+                    threshold_label += f" (Gap: {gap_threshold:.3f}% | Spike: {spike_threshold:.3f}%)" if gap_threshold and spike_threshold else ""
+
+            context_menu.add_command(
+                label=threshold_label,
+                command=lambda: self.edit_gap_spike_alert(broker, symbol, is_point_based)
+            )
+
+            # Add option to apply to all products
+            if is_point_based and (gap_threshold is not None or spike_threshold is not None):
+                context_menu.add_command(
+                    label=f"🔄 Apply Point thresholds to ALL products",
+                    command=lambda: self.apply_gap_spike_to_all(broker, symbol, is_point_based)
+                )
+            elif not is_point_based and (gap_threshold is not None or spike_threshold is not None):
+                context_menu.add_command(
+                    label=f"🔄 Apply % thresholds to ALL products",
+                    command=lambda: self.apply_gap_spike_to_all(broker, symbol, is_point_based)
+                )
+
+            # Clear custom thresholds
+            has_custom = (key in custom_thresholds) or (key in gap_settings) or (key in spike_settings)
+            if has_custom:
+                context_menu.add_command(
+                    label=f"❌ Clear Custom Thresholds",
+                    command=lambda: self.clear_gap_spike_alert(broker, symbol, is_point_based)
+                )
+
+            context_menu.add_separator()
+
             # Add Hide options
             context_menu.add_command(
                 label=f"🔒 Hide {symbol} - 30 phút",
@@ -5816,6 +5868,271 @@ class GapSpikeDetectorGUI:
 
         except Exception as e:
             logger.error(f"Error hiding alert symbol: {e}")
+
+    def edit_gap_spike_alert(self, broker, symbol, is_point_based):
+        """Edit Gap/Spike thresholds from alert board context menu"""
+        global custom_thresholds, gap_settings, spike_settings
+        try:
+            key = f"{broker}_{symbol}"
+
+            if is_point_based:
+                # Point-based editing
+                gap_point = custom_thresholds.get(key, {}).get('gap_point')
+                spike_point = custom_thresholds.get(key, {}).get('spike_point')
+
+                gap_initial = f"{gap_point:.1f}" if gap_point is not None else ""
+                spike_initial = f"{spike_point:.1f}" if spike_point is not None else ""
+
+                # Create dialog
+                dialog = tk.Toplevel(self.root)
+                dialog.title(f"⚙️ Chỉnh Gap/Spike Point - {broker} {symbol}")
+                dialog.geometry("480x250")
+                dialog.transient(self.root)
+                dialog.grab_set()
+
+                ttk.Label(dialog, text=f"Chỉnh thông số Point cho: {broker} - {symbol}",
+                         font=('Arial', 11, 'bold')).pack(pady=10)
+
+                # Gap Point input
+                gap_frame = ttk.Frame(dialog)
+                gap_frame.pack(fill=tk.X, padx=20, pady=5)
+                ttk.Label(gap_frame, text="Ngưỡng Gap (Point):", width=20).pack(side=tk.LEFT)
+                gap_var = tk.StringVar(value=gap_initial)
+                ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+                # Spike Point input
+                spike_frame = ttk.Frame(dialog)
+                spike_frame.pack(fill=tk.X, padx=20, pady=5)
+                ttk.Label(spike_frame, text="Ngưỡng Spike (Point):", width=20).pack(side=tk.LEFT)
+                spike_var = tk.StringVar(value=spike_initial)
+                ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+                ttk.Label(dialog, text="💡 Để trống = xóa setting (dùng default từ file txt)",
+                         foreground='blue', font=('Arial', 9)).pack(pady=10)
+
+                button_frame = ttk.Frame(dialog)
+                button_frame.pack(pady=20)
+
+                def on_save():
+                    gap_value = gap_var.get().strip()
+                    spike_value = spike_var.get().strip()
+
+                    if key not in custom_thresholds:
+                        custom_thresholds[key] = {}
+
+                    # Update Gap Point
+                    if gap_value == "":
+                        if 'gap_point' in custom_thresholds[key]:
+                            del custom_thresholds[key]['gap_point']
+                    else:
+                        try:
+                            custom_thresholds[key]['gap_point'] = float(gap_value)
+                        except ValueError:
+                            messagebox.showerror("Error", "Gap Point không hợp lệ")
+                            return
+
+                    # Update Spike Point
+                    if spike_value == "":
+                        if 'spike_point' in custom_thresholds[key]:
+                            del custom_thresholds[key]['spike_point']
+                    else:
+                        try:
+                            custom_thresholds[key]['spike_point'] = float(spike_value)
+                        except ValueError:
+                            messagebox.showerror("Error", "Spike Point không hợp lệ")
+                            return
+
+                    if not custom_thresholds[key]:
+                        del custom_thresholds[key]
+
+                    save_custom_thresholds()
+                    self.log(f"✅ Đã cập nhật Point: {broker} {symbol} - Gap: {gap_value if gap_value else 'default'}, Spike: {spike_value if spike_value else 'default'}")
+                    dialog.destroy()
+                    messagebox.showinfo("Thành công", f"Đã lưu thông số Point cho {broker} {symbol}")
+
+                ttk.Button(button_frame, text="💾 Lưu", command=on_save, width=10).pack(side=tk.LEFT, padx=5)
+                ttk.Button(button_frame, text="❌ Hủy", command=dialog.destroy, width=10).pack(side=tk.LEFT, padx=5)
+
+            else:
+                # Percent-based editing
+                gap_percent = gap_settings.get(key)
+                spike_percent = spike_settings.get(key)
+
+                gap_initial = f"{gap_percent:.3f}" if gap_percent is not None else ""
+                spike_initial = f"{spike_percent:.3f}" if spike_percent is not None else ""
+
+                # Create dialog
+                dialog = tk.Toplevel(self.root)
+                dialog.title(f"⚙️ Chỉnh Gap/Spike % - {broker} {symbol}")
+                dialog.geometry("480x250")
+                dialog.transient(self.root)
+                dialog.grab_set()
+
+                ttk.Label(dialog, text=f"Chỉnh thông số % cho: {broker} - {symbol}",
+                         font=('Arial', 11, 'bold')).pack(pady=10)
+
+                # Gap % input
+                gap_frame = ttk.Frame(dialog)
+                gap_frame.pack(fill=tk.X, padx=20, pady=5)
+                ttk.Label(gap_frame, text="Ngưỡng Gap (%):", width=20).pack(side=tk.LEFT)
+                gap_var = tk.StringVar(value=gap_initial)
+                ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+                # Spike % input
+                spike_frame = ttk.Frame(dialog)
+                spike_frame.pack(fill=tk.X, padx=20, pady=5)
+                ttk.Label(spike_frame, text="Ngưỡng Spike (%):", width=20).pack(side=tk.LEFT)
+                spike_var = tk.StringVar(value=spike_initial)
+                ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+                ttk.Label(dialog, text="💡 Để trống = xóa setting (dùng default)",
+                         foreground='blue', font=('Arial', 9)).pack(pady=10)
+
+                button_frame = ttk.Frame(dialog)
+                button_frame.pack(pady=20)
+
+                def on_save():
+                    gap_value = gap_var.get().strip()
+                    spike_value = spike_var.get().strip()
+
+                    # Update Gap %
+                    if gap_value == "":
+                        if key in gap_settings:
+                            del gap_settings[key]
+                    else:
+                        try:
+                            gap_settings[key] = float(gap_value)
+                        except ValueError:
+                            messagebox.showerror("Error", "Gap % không hợp lệ")
+                            return
+
+                    # Update Spike %
+                    if spike_value == "":
+                        if key in spike_settings:
+                            del spike_settings[key]
+                    else:
+                        try:
+                            spike_settings[key] = float(spike_value)
+                        except ValueError:
+                            messagebox.showerror("Error", "Spike % không hợp lệ")
+                            return
+
+                    schedule_save('gap_settings')
+                    schedule_save('spike_settings')
+                    self.log(f"✅ Đã cập nhật %: {broker} {symbol} - Gap: {gap_value if gap_value else 'default'}%, Spike: {spike_value if spike_value else 'default'}%")
+                    dialog.destroy()
+                    messagebox.showinfo("Thành công", f"Đã lưu thông số % cho {broker} {symbol}")
+
+                ttk.Button(button_frame, text="💾 Lưu", command=on_save, width=10).pack(side=tk.LEFT, padx=5)
+                ttk.Button(button_frame, text="❌ Hủy", command=dialog.destroy, width=10).pack(side=tk.LEFT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error editing gap/spike from alert: {e}")
+            messagebox.showerror("Error", f"Lỗi: {str(e)}")
+
+    def apply_gap_spike_to_all(self, broker, symbol, is_point_based):
+        """Apply Gap/Spike thresholds to all products"""
+        global custom_thresholds, gap_settings, spike_settings
+        try:
+            key = f"{broker}_{symbol}"
+
+            if is_point_based:
+                gap_point = custom_thresholds.get(key, {}).get('gap_point')
+                spike_point = custom_thresholds.get(key, {}).get('spike_point')
+
+                if gap_point is None and spike_point is None:
+                    messagebox.showwarning("Warning", "Không có thông số Point để áp dụng")
+                    return
+
+                confirm = messagebox.askyesno(
+                    "Xác nhận",
+                    f"Áp dụng Gap Point: {gap_point if gap_point else 'default'}, Spike Point: {spike_point if spike_point else 'default'} cho TẤT CẢ sản phẩm?"
+                )
+                if not confirm:
+                    return
+
+                count = 0
+                for product_key in list(price_data.keys()):
+                    if product_key not in custom_thresholds:
+                        custom_thresholds[product_key] = {}
+                    if gap_point is not None:
+                        custom_thresholds[product_key]['gap_point'] = gap_point
+                    if spike_point is not None:
+                        custom_thresholds[product_key]['spike_point'] = spike_point
+                    count += 1
+
+                save_custom_thresholds()
+                self.log(f"✅ Đã áp dụng Point thresholds cho {count} sản phẩm")
+                messagebox.showinfo("Thành công", f"Đã áp dụng cho {count} sản phẩm")
+
+            else:
+                gap_percent = gap_settings.get(key)
+                spike_percent = spike_settings.get(key)
+
+                if gap_percent is None and spike_percent is None:
+                    messagebox.showwarning("Warning", "Không có thông số % để áp dụng")
+                    return
+
+                confirm = messagebox.askyesno(
+                    "Xác nhận",
+                    f"Áp dụng Gap: {gap_percent:.3f}%, Spike: {spike_percent:.3f}% cho TẤT CẢ sản phẩm?"
+                )
+                if not confirm:
+                    return
+
+                count = 0
+                for product_key in list(price_data.keys()):
+                    if gap_percent is not None:
+                        gap_settings[product_key] = gap_percent
+                    if spike_percent is not None:
+                        spike_settings[product_key] = spike_percent
+                    count += 1
+
+                schedule_save('gap_settings')
+                schedule_save('spike_settings')
+                self.log(f"✅ Đã áp dụng % thresholds cho {count} sản phẩm")
+                messagebox.showinfo("Thành công", f"Đã áp dụng cho {count} sản phẩm")
+
+        except Exception as e:
+            logger.error(f"Error applying gap/spike to all: {e}")
+            messagebox.showerror("Error", f"Lỗi: {str(e)}")
+
+    def clear_gap_spike_alert(self, broker, symbol, is_point_based):
+        """Clear custom Gap/Spike thresholds"""
+        global custom_thresholds, gap_settings, spike_settings
+        try:
+            key = f"{broker}_{symbol}"
+
+            confirm = messagebox.askyesno(
+                "Xác nhận",
+                f"Xóa custom thresholds cho {broker} {symbol}?"
+            )
+            if not confirm:
+                return
+
+            if is_point_based:
+                if key in custom_thresholds:
+                    if 'gap_point' in custom_thresholds[key]:
+                        del custom_thresholds[key]['gap_point']
+                    if 'spike_point' in custom_thresholds[key]:
+                        del custom_thresholds[key]['spike_point']
+                    if not custom_thresholds[key]:
+                        del custom_thresholds[key]
+                save_custom_thresholds()
+            else:
+                if key in gap_settings:
+                    del gap_settings[key]
+                if key in spike_settings:
+                    del spike_settings[key]
+                schedule_save('gap_settings')
+                schedule_save('spike_settings')
+
+            self.log(f"✅ Đã xóa custom thresholds cho {broker} {symbol}")
+            messagebox.showinfo("Thành công", f"Đã xóa custom thresholds")
+
+        except Exception as e:
+            logger.error(f"Error clearing gap/spike thresholds: {e}")
+            messagebox.showerror("Error", f"Lỗi: {str(e)}")
 
     def show_delay_context_menu(self, event):
         """Show context menu for delay board"""
