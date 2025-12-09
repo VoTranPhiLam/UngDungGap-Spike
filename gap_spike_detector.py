@@ -6058,26 +6058,29 @@ class SettingsWindow:
         
         # Tab 1: Delay Settings
         self.create_delay_settings_tab()
-        
-        # Tab 2: Gap/Spike Settings
+
+        # Tab 2: Product Delay Management (NEW)
+        self.create_product_delay_management_tab()
+
+        # Tab 3: Gap/Spike Settings
         self.create_gap_spike_settings_tab()
 
-        # Tab 3: Symbol Filter
+        # Tab 4: Symbol Filter
         self.create_symbol_filter_tab()
-        
-        # Tab 4: Screenshot Settings
+
+        # Tab 5: Screenshot Settings
         self.create_screenshot_settings_tab()
-        
-        # Tab 5: Manual Hidden List
+
+        # Tab 6: Manual Hidden List
         self.create_hidden_list_tab()
-        
-        # Tab 6: Tools
+
+        # Tab 7: Tools
         self.create_tools_tab()
-        
-        # Tab 7: Auto-Send Google Sheets
+
+        # Tab 8: Auto-Send Google Sheets
         self.create_auto_send_tab()
 
-        # Tab 8: Audio Alerts (NEW)
+        # Tab 9: Audio Alerts
         self.create_audio_settings_tab()
 
         # Load initial statistics
@@ -6096,11 +6099,12 @@ class SettingsWindow:
         threshold_frame = ttk.LabelFrame(delay_frame, text="Ngưỡng Delay", padding="10")
         threshold_frame.pack(fill=tk.X, pady=10)
 
-        ttk.Label(threshold_frame, text="Ngưỡng delay (giây):").pack(side=tk.LEFT, padx=5)
-        self.delay_threshold_var = tk.IntVar(value=delay_settings['threshold'])
-        ttk.Spinbox(threshold_frame, from_=30, to=600, textvariable=self.delay_threshold_var,
+        ttk.Label(threshold_frame, text="Ngưỡng delay (phút):").pack(side=tk.LEFT, padx=5)
+        # Convert seconds to minutes for display
+        self.delay_threshold_var = tk.IntVar(value=delay_settings['threshold'] // 60)
+        ttk.Spinbox(threshold_frame, from_=1, to=60, textvariable=self.delay_threshold_var,
                    width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Label(threshold_frame, text="(30-600s)", foreground='gray').pack(side=tk.LEFT, padx=5)
+        ttk.Label(threshold_frame, text="(1-60 phút)", foreground='gray').pack(side=tk.LEFT, padx=5)
 
         # Info
         info_text = "Symbols không update giá trên ngưỡng sẽ hiển thị trong bảng Delay"
@@ -6110,10 +6114,11 @@ class SettingsWindow:
         auto_hide_frame = ttk.LabelFrame(delay_frame, text="Thời gian tự động ẩn", padding="10")
         auto_hide_frame.pack(fill=tk.X, pady=10)
 
-        ttk.Label(auto_hide_frame, text="Tự động ẩn sau (giây):").pack(side=tk.LEFT, padx=5)
-        self.auto_hide_time_var = tk.IntVar(value=delay_settings.get('auto_hide_time', 3600))
-        ttk.Spinbox(auto_hide_frame, from_=600, to=7200, textvariable=self.auto_hide_time_var,
-                   width=10, increment=300).pack(side=tk.LEFT, padx=5)
+        ttk.Label(auto_hide_frame, text="Tự động ẩn sau (phút):").pack(side=tk.LEFT, padx=5)
+        # Convert seconds to minutes for display
+        self.auto_hide_time_var = tk.IntVar(value=delay_settings.get('auto_hide_time', 3600) // 60)
+        ttk.Spinbox(auto_hide_frame, from_=10, to=120, textvariable=self.auto_hide_time_var,
+                   width=10, increment=5).pack(side=tk.LEFT, padx=5)
         ttk.Label(auto_hide_frame, text="(10-120 phút)", foreground='gray').pack(side=tk.LEFT, padx=5)
 
         # Info
@@ -6123,7 +6128,297 @@ class SettingsWindow:
         # Save button
         ttk.Button(delay_frame, text="💾 Lưu cài đặt Delay",
                   command=self.save_delay_settings).pack(pady=20)
-    
+
+    def create_product_delay_management_tab(self):
+        """Create Product Delay Management tab"""
+        pdm_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(pdm_frame, text="🔧 Quản lý Delay Sản phẩm")
+
+        # Title
+        ttk.Label(pdm_frame, text="Quản lý thời gian Delay cho từng sản phẩm",
+                 font=('Arial', 12, 'bold')).pack(anchor=tk.W, pady=5)
+
+        # Instructions
+        inst_frame = ttk.LabelFrame(pdm_frame, text="💡 Hướng dẫn", padding="5")
+        inst_frame.pack(fill=tk.X, pady=5)
+
+        instructions = """• Tìm kiếm sản phẩm theo tên hoặc lọc theo sàn
+• Chọn một hoặc nhiều sản phẩm (Ctrl+Click hoặc Shift+Click)
+• Nhập thời gian delay (phút) và nhấn "Áp dụng" để thiết lập
+• Delay tùy chỉnh sẽ ghi đè ngưỡng delay mặc định"""
+
+        ttk.Label(inst_frame, text=instructions, justify=tk.LEFT, foreground='blue',
+                 font=('Arial', 9)).pack(anchor=tk.W)
+
+        # Search and Filter frame
+        search_frame = ttk.Frame(pdm_frame)
+        search_frame.pack(fill=tk.X, pady=5)
+
+        # Search by name
+        ttk.Label(search_frame, text="🔍 Tìm kiếm:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.pdm_search_var = tk.StringVar()
+        self.pdm_search_var.trace('w', lambda *args: self.filter_product_delay_list())
+        search_entry = ttk.Entry(search_frame, textvariable=self.pdm_search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5)
+
+        # Filter by broker
+        ttk.Label(search_frame, text="Lọc theo sàn:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(20, 5))
+        self.pdm_broker_filter_var = tk.StringVar(value="Tất cả")
+        self.pdm_broker_filter = ttk.Combobox(search_frame, textvariable=self.pdm_broker_filter_var,
+                                              width=20, state='readonly')
+        self.pdm_broker_filter.pack(side=tk.LEFT, padx=5)
+        self.pdm_broker_filter.bind('<<ComboboxSelected>>', lambda e: self.filter_product_delay_list())
+
+        # Refresh button
+        ttk.Button(search_frame, text="🔄 Làm mới",
+                  command=self.refresh_product_delay_list).pack(side=tk.LEFT, padx=5)
+
+        # Product list frame
+        list_frame = ttk.LabelFrame(pdm_frame, text="📋 Danh sách sản phẩm", padding="5")
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Create treeview with scrollbars
+        tree_scroll_frame = ttk.Frame(list_frame)
+        tree_scroll_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_scroll_frame, orient="vertical")
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb = ttk.Scrollbar(tree_scroll_frame, orient="horizontal")
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Treeview
+        columns = ('Broker', 'Symbol', 'Type', 'Current Delay (min)', 'Status')
+        self.pdm_tree = ttk.Treeview(tree_scroll_frame, columns=columns, show='headings',
+                                     height=15, selectmode='extended',
+                                     yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.config(command=self.pdm_tree.yview)
+        hsb.config(command=self.pdm_tree.xview)
+
+        self.pdm_tree.heading('Broker', text='Sàn')
+        self.pdm_tree.heading('Symbol', text='Sản phẩm')
+        self.pdm_tree.heading('Type', text='Loại')
+        self.pdm_tree.heading('Current Delay (min)', text='Delay hiện tại (phút)')
+        self.pdm_tree.heading('Status', text='Trạng thái')
+
+        self.pdm_tree.column('Broker', width=120)
+        self.pdm_tree.column('Symbol', width=120)
+        self.pdm_tree.column('Type', width=80)
+        self.pdm_tree.column('Current Delay (min)', width=150)
+        self.pdm_tree.column('Status', width=200)
+
+        self.pdm_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Action frame
+        action_frame = ttk.LabelFrame(pdm_frame, text="⚡ Thao tác", padding="10")
+        action_frame.pack(fill=tk.X, pady=5)
+
+        # Delay input
+        input_row = ttk.Frame(action_frame)
+        input_row.pack(fill=tk.X, pady=5)
+
+        ttk.Label(input_row, text="Thời gian delay (phút):", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.pdm_delay_var = tk.IntVar(value=5)
+        ttk.Spinbox(input_row, from_=1, to=120, textvariable=self.pdm_delay_var,
+                   width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Label(input_row, text="(1-120 phút)", foreground='gray').pack(side=tk.LEFT, padx=5)
+
+        # Buttons row
+        button_row = ttk.Frame(action_frame)
+        button_row.pack(fill=tk.X, pady=5)
+
+        ttk.Button(button_row, text="✅ Áp dụng cho sản phẩm đã chọn",
+                  command=self.apply_delay_to_selected_products).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_row, text="🗑️ Xóa delay tùy chỉnh",
+                  command=self.remove_delay_from_selected_products).pack(side=tk.LEFT, padx=5)
+        ttk.Label(button_row, text="(Ctrl+Click hoặc Shift+Click để chọn nhiều)",
+                 foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=10)
+
+        # Info label
+        self.pdm_info_label = ttk.Label(pdm_frame, text="", foreground='blue', font=('Arial', 9))
+        self.pdm_info_label.pack(pady=5)
+
+        # Load initial data
+        self.refresh_product_delay_list()
+
+    def refresh_product_delay_list(self):
+        """Refresh the product delay list"""
+        try:
+            # Get all brokers from market_data
+            brokers = list(market_data.keys()) if market_data else []
+            brokers.sort()
+
+            # Update broker filter
+            broker_options = ["Tất cả"] + brokers
+            self.pdm_broker_filter['values'] = broker_options
+
+            # Update product list
+            self.filter_product_delay_list()
+
+            # Update info label
+            total_products = sum(len(market_data.get(broker, {})) for broker in market_data)
+            custom_delays = len(product_delay_settings)
+            self.pdm_info_label.config(
+                text=f"📊 Tổng số: {total_products} sản phẩm | {len(brokers)} sàn | {custom_delays} sản phẩm có delay tùy chỉnh")
+
+        except Exception as e:
+            logger.error(f"Error refreshing product delay list: {e}")
+            messagebox.showerror("Error", f"Lỗi làm mới danh sách: {str(e)}")
+
+    def filter_product_delay_list(self):
+        """Filter and display product delay list"""
+        try:
+            # Clear current items
+            for item in self.pdm_tree.get_children():
+                self.pdm_tree.delete(item)
+
+            # Get filter values
+            search_text = self.pdm_search_var.get().lower()
+            selected_broker = self.pdm_broker_filter_var.get()
+
+            # Collect all products
+            all_products = []
+            for broker, symbols in market_data.items():
+                # Filter by broker
+                if selected_broker != "Tất cả" and broker != selected_broker:
+                    continue
+
+                for symbol, data in symbols.items():
+                    # Filter by search text
+                    if search_text and search_text not in symbol.lower():
+                        continue
+
+                    key = f"{broker}_{symbol}"
+                    custom_delay = product_delay_settings.get(key, None)
+
+                    # Get product type (simplified)
+                    product_type = "Forex" if len(symbol) == 6 else "CFD"
+
+                    if custom_delay is not None:
+                        delay_display = f"{custom_delay}"
+                        status = "✅ Tùy chỉnh"
+                    else:
+                        delay_display = f"Mặc định ({delay_settings['threshold'] // 60})"
+                        status = "⚪ Mặc định"
+
+                    all_products.append({
+                        'broker': broker,
+                        'symbol': symbol,
+                        'type': product_type,
+                        'delay': delay_display,
+                        'status': status
+                    })
+
+            # Sort by broker, then symbol
+            all_products.sort(key=lambda x: (x['broker'], x['symbol']))
+
+            # Add to tree
+            for product in all_products:
+                self.pdm_tree.insert('', 'end', values=(
+                    product['broker'],
+                    product['symbol'],
+                    product['type'],
+                    product['delay'],
+                    product['status']
+                ))
+
+        except Exception as e:
+            logger.error(f"Error filtering product delay list: {e}")
+
+    def apply_delay_to_selected_products(self):
+        """Apply custom delay to selected products"""
+        try:
+            selected_items = self.pdm_tree.selection()
+            if not selected_items:
+                messagebox.showwarning("Warning", "Vui lòng chọn ít nhất một sản phẩm!")
+                return
+
+            delay_minutes = self.pdm_delay_var.get()
+
+            # Confirm with user
+            count = len(selected_items)
+            confirm = messagebox.askyesno(
+                "Xác nhận",
+                f"Áp dụng delay {delay_minutes} phút cho {count} sản phẩm đã chọn?"
+            )
+
+            if not confirm:
+                return
+
+            # Apply to each selected product
+            for item_id in selected_items:
+                values = self.pdm_tree.item(item_id, 'values')
+                broker = values[0]
+                symbol = values[1]
+                key = f"{broker}_{symbol}"
+
+                product_delay_settings[key] = delay_minutes
+
+            # Save to file
+            save_product_delay_settings()
+
+            # Refresh display
+            self.filter_product_delay_list()
+            self.refresh_product_delay_list()
+
+            messagebox.showinfo("Success",
+                              f"✅ Đã áp dụng delay {delay_minutes} phút cho {count} sản phẩm!")
+
+            self.main_app.log(f"⏱️ Applied custom delay {delay_minutes}min to {count} products")
+            logger.info(f"Applied custom delay {delay_minutes}min to {count} products")
+
+        except Exception as e:
+            logger.error(f"Error applying delay: {e}")
+            messagebox.showerror("Error", f"Lỗi áp dụng delay: {str(e)}")
+
+    def remove_delay_from_selected_products(self):
+        """Remove custom delay from selected products"""
+        try:
+            selected_items = self.pdm_tree.selection()
+            if not selected_items:
+                messagebox.showwarning("Warning", "Vui lòng chọn ít nhất một sản phẩm!")
+                return
+
+            # Confirm with user
+            count = len(selected_items)
+            confirm = messagebox.askyesno(
+                "Xác nhận",
+                f"Xóa delay tùy chỉnh cho {count} sản phẩm đã chọn?\n(Sẽ sử dụng delay mặc định)"
+            )
+
+            if not confirm:
+                return
+
+            # Remove from each selected product
+            removed_count = 0
+            for item_id in selected_items:
+                values = self.pdm_tree.item(item_id, 'values')
+                broker = values[0]
+                symbol = values[1]
+                key = f"{broker}_{symbol}"
+
+                if key in product_delay_settings:
+                    del product_delay_settings[key]
+                    removed_count += 1
+
+            # Save to file
+            save_product_delay_settings()
+
+            # Refresh display
+            self.filter_product_delay_list()
+            self.refresh_product_delay_list()
+
+            messagebox.showinfo("Success",
+                              f"✅ Đã xóa delay tùy chỉnh cho {removed_count} sản phẩm!")
+
+            self.main_app.log(f"⏱️ Removed custom delay from {removed_count} products")
+            logger.info(f"Removed custom delay from {removed_count} products")
+
+        except Exception as e:
+            logger.error(f"Error removing delay: {e}")
+            messagebox.showerror("Error", f"Lỗi xóa delay: {str(e)}")
+
     def create_gap_spike_settings_tab(self):
         """Create Gap/Spike Settings tab with visual editor"""
         gs_frame = ttk.Frame(self.notebook, padding="10")
@@ -7306,22 +7601,26 @@ class SettingsWindow:
         """Save delay settings"""
         global delay_settings
         try:
-            delay_settings['threshold'] = self.delay_threshold_var.get()
-            delay_settings['auto_hide_time'] = self.auto_hide_time_var.get()
+            # Convert minutes to seconds for storage
+            threshold_minutes = self.delay_threshold_var.get()
+            auto_hide_minutes = self.auto_hide_time_var.get()
+
+            delay_settings['threshold'] = threshold_minutes * 60  # Convert to seconds
+            delay_settings['auto_hide_time'] = auto_hide_minutes * 60  # Convert to seconds
 
             schedule_save('delay_settings')
 
             # Update main app
             self.main_app.delay_threshold.set(delay_settings['threshold'])
-            
-            messagebox.showinfo("Success", 
+
+            messagebox.showinfo("Success",
                               f"Đã lưu delay settings:\n"
-                              f"- Threshold: {delay_settings['threshold']}s\n"
-                              f"- Auto hide: {delay_settings['auto_hide_time']}s")
-            
-            self.main_app.log(f"⚙️ Updated delay settings: threshold={delay_settings['threshold']}s")
+                              f"- Threshold: {threshold_minutes} phút ({delay_settings['threshold']}s)\n"
+                              f"- Auto hide: {auto_hide_minutes} phút ({delay_settings['auto_hide_time']}s)")
+
+            self.main_app.log(f"⚙️ Updated delay settings: threshold={threshold_minutes}min, auto_hide={auto_hide_minutes}min")
             logger.info(f"Delay settings saved: {delay_settings}")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Lỗi lưu delay settings: {str(e)}")
     
