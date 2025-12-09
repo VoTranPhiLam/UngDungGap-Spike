@@ -310,7 +310,8 @@ loading_state = {
     'total_symbols': 0,  # Total unique symbols from all brokers
     'processed_symbols': 0,  # Number of symbols processed
     'symbols_seen': set(),  # Track unique broker_symbol pairs
-    'first_batch_received': False  # Track if we received first data batch
+    'first_batch_received': False,  # Track if we received first data batch
+    'loading_complete_logged': False  # Track if we've logged "Loading complete!" to avoid spam
 }
 
 def load_gap_config_file():
@@ -572,8 +573,8 @@ def find_symbol_config(symbol):
 
     if best_match:
         config = gap_config[best_match]
-        # ✅ Chỉ log lần đầu tiên tìm thấy subsequence match (chưa có trong cache)
-        logger.info(f"✅ Subsequence match: '{symbol}' → '{best_matched_alias}'")
+        # ✅ Tắt log subsequence match để tránh spam log (chỉ dò 1 lần khi khởi động)
+        # logger.info(f"✅ Subsequence match: '{symbol}' → '{best_matched_alias}'")
         # ✅ Lưu vào cache trước khi return
         result = (best_match, config, best_matched_alias)
         symbol_config_cache[symbol] = result
@@ -3031,7 +3032,10 @@ def receive_data():
             processed_pct = (loading_state['processed_symbols'] / loading_state['total_symbols']) * 100
             if processed_pct >= 100:
                 loading_state['is_loading'] = False
-                logger.info(f"✅ Loading complete! Processed {loading_state['processed_symbols']}/{loading_state['total_symbols']} symbols")
+                # ✅ Chỉ log 1 lần duy nhất khi loading complete (tránh spam log)
+                if not loading_state['loading_complete_logged']:
+                    logger.info(f"✅ Loading complete! Processed {loading_state['processed_symbols']}/{loading_state['total_symbols']} symbols")
+                    loading_state['loading_complete_logged'] = True
 
         # Cleanup old/stale data (brokers không còn gửi data)
         cleanup_stale_data()
@@ -4832,6 +4836,7 @@ class GapSpikeDetectorGUI:
                 # Auto reset sẽ KHÔNG clear cache (không dò lại sản phẩm)
                 if reason == "manual":
                     symbol_config_cache.clear()
+                    loading_state['loading_complete_logged'] = False  # Reset flag để log lại khi loading complete
                     self.log("🔍 Đã clear cache matching - sẽ dò lại sản phẩm khi nhận data mới")
 
             self.tree.delete(*self.tree.get_children())
