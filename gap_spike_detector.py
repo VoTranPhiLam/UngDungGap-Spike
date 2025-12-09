@@ -4463,15 +4463,33 @@ class GapSpikeDetectorGUI:
                 # Get number of selected items
                 selected_count = len(self.point_tree.selection())
 
-                # Create context menu
-                menu = tk.Menu(self.root, tearoff=0)
-                if selected_count > 1:
-                    menu.add_command(label=f"📊 Di chuyển {selected_count} sản phẩm sang Bảng 2 (%)",
-                                   command=self.move_from_point_to_percent)
-                else:
-                    menu.add_command(label="📊 Di chuyển sang Bảng 2 (%)",
-                                   command=self.move_from_point_to_percent)
-                menu.post(event.x_root, event.y_root)
+                # Get item values for single selection
+                values = self.point_tree.item(item, 'values')
+                if values and len(values) >= 2:
+                    broker = values[0]
+                    symbol = values[1]
+
+                    # Create context menu
+                    menu = tk.Menu(self.root, tearoff=0)
+
+                    # Only show edit and chart options for single selection
+                    if selected_count == 1:
+                        menu.add_command(label=f"⚙️ Sửa thông số Gap/Spike - {symbol}",
+                                       command=lambda: self.edit_point_thresholds_from_context(broker, symbol, item))
+                        menu.add_separator()
+                        menu.add_command(label=f"📊 Mở Chart - {symbol}",
+                                       command=lambda: self.open_chart(broker, symbol))
+                        menu.add_separator()
+
+                    # Move to Bảng 2 option
+                    if selected_count > 1:
+                        menu.add_command(label=f"🔄 Di chuyển {selected_count} sản phẩm sang Bảng 2 (%)",
+                                       command=self.move_from_point_to_percent)
+                    else:
+                        menu.add_command(label="🔄 Di chuyển sang Bảng 2 (%)",
+                                       command=self.move_from_point_to_percent)
+
+                    menu.post(event.x_root, event.y_root)
         except Exception as e:
             logger.error(f"Error showing point context menu: {e}")
 
@@ -4488,15 +4506,33 @@ class GapSpikeDetectorGUI:
                 # Get number of selected items
                 selected_count = len(self.percent_tree.selection())
 
-                # Create context menu
-                menu = tk.Menu(self.root, tearoff=0)
-                if selected_count > 1:
-                    menu.add_command(label=f"📊 Di chuyển {selected_count} sản phẩm sang Bảng 1 (Point)",
-                                   command=self.move_from_percent_to_point)
-                else:
-                    menu.add_command(label="📊 Di chuyển sang Bảng 1 (Point)",
-                                   command=self.move_from_percent_to_point)
-                menu.post(event.x_root, event.y_root)
+                # Get item values for single selection
+                values = self.percent_tree.item(item, 'values')
+                if values and len(values) >= 2:
+                    broker = values[0]
+                    symbol = values[1]
+
+                    # Create context menu
+                    menu = tk.Menu(self.root, tearoff=0)
+
+                    # Only show edit and chart options for single selection
+                    if selected_count == 1:
+                        menu.add_command(label=f"⚙️ Sửa thông số Gap/Spike - {symbol}",
+                                       command=lambda: self.edit_percent_thresholds_from_context(broker, symbol, item))
+                        menu.add_separator()
+                        menu.add_command(label=f"📊 Mở Chart - {symbol}",
+                                       command=lambda: self.open_chart(broker, symbol))
+                        menu.add_separator()
+
+                    # Move to Bảng 1 option
+                    if selected_count > 1:
+                        menu.add_command(label=f"🔄 Di chuyển {selected_count} sản phẩm sang Bảng 1 (Point)",
+                                       command=self.move_from_percent_to_point)
+                    else:
+                        menu.add_command(label="🔄 Di chuyển sang Bảng 1 (Point)",
+                                       command=self.move_from_percent_to_point)
+
+                    menu.post(event.x_root, event.y_root)
         except Exception as e:
             logger.error(f"Error showing percent context menu: {e}")
 
@@ -5436,6 +5472,230 @@ class GapSpikeDetectorGUI:
 
         except Exception as e:
             logger.error(f"Error editing gap/spike from context: {e}")
+            messagebox.showerror("Error", f"Lỗi: {str(e)}")
+
+    def edit_point_thresholds_from_context(self, broker, symbol, item):
+        """Edit Gap/Spike Point thresholds from context menu (Bảng 1 - Point-based)"""
+        global custom_thresholds, gap_config
+        try:
+            key = f"{broker}_{symbol}"
+
+            # Get current thresholds
+            # Try to get from custom_thresholds first, then fallback to gap_config
+            gap_point = None
+            spike_point = None
+
+            if key in custom_thresholds:
+                gap_point = custom_thresholds[key].get('gap_point')
+                spike_point = custom_thresholds[key].get('spike_point')
+
+            # If not in custom_thresholds, check gap_config for default
+            if gap_point is None:
+                # Find matched symbol in gap_config
+                matched_symbol = None
+                for symbol_chuan, config in gap_config.items():
+                    if symbol.lower() == symbol_chuan.lower() or symbol.lower() in [a.lower() for a in config.get('aliases', [])]:
+                        matched_symbol = symbol_chuan
+                        break
+
+                if matched_symbol:
+                    gap_point = gap_config[matched_symbol].get('custom_gap')
+
+            gap_initial = f"{gap_point:.1f}" if gap_point is not None else ""
+            spike_initial = f"{spike_point:.1f}" if spike_point is not None else ""
+
+            # Create dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"⚙️ Sửa thông số Gap/Spike Point - {broker} {symbol}")
+            dialog.geometry("480x250")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # Title
+            ttk.Label(dialog, text=f"Sửa thông số Point cho: {broker} - {symbol}",
+                     font=('Arial', 11, 'bold')).pack(pady=10)
+
+            # Gap Point input
+            gap_frame = ttk.Frame(dialog)
+            gap_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(gap_frame, text="Ngưỡng Gap (Point):", width=20).pack(side=tk.LEFT)
+            gap_var = tk.StringVar(value=gap_initial)
+            ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Spike Point input
+            spike_frame = ttk.Frame(dialog)
+            spike_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(spike_frame, text="Ngưỡng Spike (Point):", width=20).pack(side=tk.LEFT)
+            spike_var = tk.StringVar(value=spike_initial)
+            ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Info label
+            info_text = "💡 Để trống = xóa setting (dùng default từ file txt)"
+            ttk.Label(dialog, text=info_text, foreground='blue', font=('Arial', 9)).pack(pady=10)
+
+            # Buttons
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=20)
+
+            def on_save():
+                gap_value = gap_var.get().strip()
+                spike_value = spike_var.get().strip()
+
+                # Initialize custom_thresholds entry if not exists
+                if key not in custom_thresholds:
+                    custom_thresholds[key] = {}
+
+                # Update Gap Point settings
+                if gap_value == "":
+                    if 'gap_point' in custom_thresholds[key]:
+                        del custom_thresholds[key]['gap_point']
+                else:
+                    try:
+                        custom_thresholds[key]['gap_point'] = float(gap_value)
+                    except ValueError:
+                        messagebox.showerror("Error", "Gap Point threshold không hợp lệ")
+                        return
+
+                # Update Spike Point settings
+                if spike_value == "":
+                    if 'spike_point' in custom_thresholds[key]:
+                        del custom_thresholds[key]['spike_point']
+                else:
+                    try:
+                        custom_thresholds[key]['spike_point'] = float(spike_value)
+                    except ValueError:
+                        messagebox.showerror("Error", "Spike Point threshold không hợp lệ")
+                        return
+
+                # Remove entry if empty
+                if not custom_thresholds[key]:
+                    del custom_thresholds[key]
+
+                # Save to file
+                save_custom_thresholds()
+
+                # Update display in table
+                gap_display = gap_value if gap_value else ""
+                spike_display = spike_value if spike_value else ""
+                threshold_display = f"Gap: {gap_display} | Spike: {spike_display}" if gap_display or spike_display else ""
+
+                # Update the tree item's Threshold column (index 4)
+                self.point_tree.set(item, 'Threshold (Point)', threshold_display)
+
+                self.log(f"✅ Đã cập nhật thông số Point: {broker} {symbol} - Gap: {gap_display}, Spike: {spike_display}")
+                logger.info(f"Updated Point thresholds for {key}: Gap={gap_display}, Spike={spike_display}")
+
+                dialog.destroy()
+                messagebox.showinfo("Thành công", f"Đã lưu thông số Point cho {broker} {symbol}")
+
+            def on_cancel():
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="💾 Lưu", command=on_save, width=10).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="❌ Hủy", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error editing point thresholds from context: {e}")
+            messagebox.showerror("Error", f"Lỗi: {str(e)}")
+
+    def edit_percent_thresholds_from_context(self, broker, symbol, item):
+        """Edit Gap/Spike % thresholds from context menu (Bảng 2 - Percent-based)"""
+        global gap_settings, spike_settings
+        try:
+            key = f"{broker}_{symbol}"
+
+            # Get current thresholds
+            gap_percent = gap_settings.get(key, None)
+            spike_percent = spike_settings.get(key, None)
+
+            gap_initial = f"{gap_percent:.3f}" if gap_percent is not None else ""
+            spike_initial = f"{spike_percent:.3f}" if spike_percent is not None else ""
+
+            # Create dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"⚙️ Sửa thông số Gap/Spike % - {broker} {symbol}")
+            dialog.geometry("480x250")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # Title
+            ttk.Label(dialog, text=f"Sửa thông số % cho: {broker} - {symbol}",
+                     font=('Arial', 11, 'bold')).pack(pady=10)
+
+            # Gap % input
+            gap_frame = ttk.Frame(dialog)
+            gap_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(gap_frame, text="Ngưỡng Gap (%):", width=20).pack(side=tk.LEFT)
+            gap_var = tk.StringVar(value=gap_initial)
+            ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Spike % input
+            spike_frame = ttk.Frame(dialog)
+            spike_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(spike_frame, text="Ngưỡng Spike (%):", width=20).pack(side=tk.LEFT)
+            spike_var = tk.StringVar(value=spike_initial)
+            ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Info label
+            info_text = "💡 Để trống = xóa setting (dùng default)"
+            ttk.Label(dialog, text=info_text, foreground='blue', font=('Arial', 9)).pack(pady=10)
+
+            # Buttons
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=20)
+
+            def on_save():
+                gap_value = gap_var.get().strip()
+                spike_value = spike_var.get().strip()
+
+                # Update Gap % settings
+                if gap_value == "":
+                    if key in gap_settings:
+                        del gap_settings[key]
+                else:
+                    try:
+                        gap_settings[key] = float(gap_value)
+                    except ValueError:
+                        messagebox.showerror("Error", "Gap % threshold không hợp lệ")
+                        return
+
+                # Update Spike % settings
+                if spike_value == "":
+                    if key in spike_settings:
+                        del spike_settings[key]
+                else:
+                    try:
+                        spike_settings[key] = float(spike_value)
+                    except ValueError:
+                        messagebox.showerror("Error", "Spike % threshold không hợp lệ")
+                        return
+
+                # Save to files
+                schedule_save('gap_settings')
+                schedule_save('spike_settings')
+
+                # Update display in table
+                gap_display = f"{gap_value}%" if gap_value else ""
+                spike_display = f"{spike_value}%" if spike_value else ""
+
+                # Update the tree item's Gap % and Spike % columns
+                self.percent_tree.set(item, 'Gap %', gap_display)
+                self.percent_tree.set(item, 'Spike %', spike_display)
+
+                self.log(f"✅ Đã cập nhật thông số %: {broker} {symbol} - Gap: {gap_display}, Spike: {spike_display}")
+                logger.info(f"Updated % thresholds for {key}: Gap={gap_display}, Spike={spike_display}")
+
+                dialog.destroy()
+                messagebox.showinfo("Thành công", f"Đã lưu thông số % cho {broker} {symbol}")
+
+            def on_cancel():
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="💾 Lưu", command=on_save, width=10).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="❌ Hủy", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error editing percent thresholds from context: {e}")
             messagebox.showerror("Error", f"Lỗi: {str(e)}")
 
 
