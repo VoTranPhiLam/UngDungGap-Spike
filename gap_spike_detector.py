@@ -120,7 +120,8 @@ audio_settings = {
     'enabled': True,  # Enable audio alerts
     'gap_sound': 'sounds/Gap.wav',  # Sound file for Gap detection
     'spike_sound': 'sounds/Spike.wav',  # Sound file for Spike detection
-    'delay_sound': 'sounds/Delay.wav'  # Sound file for Delay detection
+    'delay_sound': 'sounds/Delay.wav',  # Sound file for Delay detection
+    'startup_delay_minutes': 5  # Delay in minutes before alerting/screenshot after app startup
 }
 
 # Track audio alerts per type (not per product)
@@ -1133,6 +1134,18 @@ def check_and_play_board_alert(alert_type):
         if not audio_settings.get('enabled', True):
             return
 
+        # ✨ Check startup delay - không phát cảnh báo trong thời gian khởi động
+        startup_delay_minutes = audio_settings.get('startup_delay_minutes', 5)
+        startup_delay_seconds = startup_delay_minutes * 60
+        current_time_check = time.time()
+        time_since_startup = current_time_check - app_startup_time
+
+        if time_since_startup < startup_delay_seconds:
+            remaining_seconds = int(startup_delay_seconds - time_since_startup)
+            remaining_minutes = remaining_seconds // 60
+            logger.debug(f"Audio alert chưa bật (còn {remaining_minutes} phút {remaining_seconds % 60} giây)")
+            return
+
         # Check if this alert type exists
         if alert_type not in audio_alert_state:
             return
@@ -2035,8 +2048,8 @@ def capture_chart_screenshot(broker, symbol, detection_type, gap_info=None, spik
         if not screenshot_settings['enabled']:
             return
 
-        # Check startup delay - chỉ bắt đầu chụp sau X phút kể từ khi khởi động
-        startup_delay_minutes = screenshot_settings.get('startup_delay_minutes', 5)
+        # ✨ Check startup delay - chỉ bắt đầu chụp sau X phút kể từ khi khởi động
+        startup_delay_minutes = audio_settings.get('startup_delay_minutes', 5)
         startup_delay_seconds = startup_delay_minutes * 60
         current_time = time.time()
         time_since_startup = current_time - app_startup_time
@@ -3476,7 +3489,10 @@ class GapSpikeDetectorGUI:
         
         # Bind double-click to edit threshold (Gap Threshold or Spike Threshold columns)
         self.tree.bind('<Double-Button-1>', self.on_symbol_double_click)
-        
+
+        # Bind right-click for context menu
+        self.tree.bind('<Button-3>', self.show_main_context_menu)
+
         # Store for search filtering
         self.last_search_term = ""
         
@@ -5294,7 +5310,135 @@ class GapSpikeDetectorGUI:
             except Exception as e:
                 logger.error(f"Error handling double-click on main Gap/Spike table: {e}")
 
-    
+    def show_main_context_menu(self, event):
+        """Show context menu for main Gap/Spike table (right-click)"""
+        try:
+            # Select item at cursor
+            item = self.tree.identify_row(event.y)
+            if item:
+                # Select the item
+                self.tree.selection_set(item)
+
+                # Get item values
+                values = self.tree.item(item, 'values')
+                if not values or len(values) < 3:
+                    return
+
+                broker = values[1]
+                symbol = values[2]
+
+                # Create context menu
+                menu = tk.Menu(self.root, tearoff=0)
+                menu.add_command(label=f"⚙️ Sửa thông số Gap/Spike - {symbol}",
+                               command=lambda: self.edit_gap_spike_from_context(broker, symbol, item))
+                menu.add_separator()
+                menu.add_command(label=f"📊 Mở Chart - {symbol}",
+                               command=lambda: self.open_chart(broker, symbol))
+                menu.post(event.x_root, event.y_root)
+        except Exception as e:
+            logger.error(f"Error showing main context menu: {e}")
+
+    def edit_gap_spike_from_context(self, broker, symbol, item):
+        """Edit Gap/Spike threshold from context menu"""
+        global gap_settings, spike_settings
+        try:
+            # Get current thresholds
+            gap_threshold = get_threshold_for_display(broker, symbol, 'gap')
+            spike_threshold = get_threshold_for_display(broker, symbol, 'spike')
+
+            gap_initial = f"{gap_threshold:.3f}" if gap_threshold is not None else ""
+            spike_initial = f"{spike_threshold:.3f}" if spike_threshold is not None else ""
+
+            # Create dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"⚙️ Sửa thông số Gap/Spike - {broker} {symbol}")
+            dialog.geometry("450x250")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # Title
+            ttk.Label(dialog, text=f"Sửa thông số cho: {broker} - {symbol}",
+                     font=('Arial', 11, 'bold')).pack(pady=10)
+
+            # Gap threshold input
+            gap_frame = ttk.Frame(dialog)
+            gap_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(gap_frame, text="Ngưỡng Gap (%):", width=18).pack(side=tk.LEFT)
+            gap_var = tk.StringVar(value=gap_initial)
+            ttk.Entry(gap_frame, textvariable=gap_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Spike threshold input
+            spike_frame = ttk.Frame(dialog)
+            spike_frame.pack(fill=tk.X, padx=20, pady=5)
+            ttk.Label(spike_frame, text="Ngưỡng Spike (%):", width=18).pack(side=tk.LEFT)
+            spike_var = tk.StringVar(value=spike_initial)
+            ttk.Entry(spike_frame, textvariable=spike_var, width=15).pack(side=tk.LEFT, padx=5)
+
+            # Info label
+            info_text = "💡 Để trống = sử dụng default/wildcard rule"
+            ttk.Label(dialog, text=info_text, foreground='blue', font=('Arial', 9)).pack(pady=10)
+
+            # Buttons
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=20)
+
+            def on_save():
+                gap_value = gap_var.get().strip()
+                spike_value = spike_var.get().strip()
+                key = f"{broker}_{symbol}"
+
+                # Update Gap settings
+                if gap_value == "":
+                    if key in gap_settings:
+                        del gap_settings[key]
+                else:
+                    try:
+                        gap_settings[key] = float(gap_value)
+                    except ValueError:
+                        messagebox.showerror("Error", "Gap threshold không hợp lệ")
+                        return
+
+                # Update Spike settings
+                if spike_value == "":
+                    if key in spike_settings:
+                        del spike_settings[key]
+                else:
+                    try:
+                        spike_settings[key] = float(spike_value)
+                    except ValueError:
+                        messagebox.showerror("Error", "Spike threshold không hợp lệ")
+                        return
+
+                # Save to files
+                schedule_save('gap_settings')
+                schedule_save('spike_settings')
+
+                # Update display
+                updated_gap = get_threshold_for_display(broker, symbol, 'gap')
+                updated_spike = get_threshold_for_display(broker, symbol, 'spike')
+                gap_display = f"{updated_gap:.3f}%" if updated_gap is not None else ""
+                spike_display = f"{updated_spike:.3f}%" if updated_spike is not None else ""
+
+                self.tree.set(item, 'Gap Threshold', gap_display)
+                self.tree.set(item, 'Spike Threshold', spike_display)
+
+                self.log(f"✅ Đã cập nhật thông số: {broker} {symbol} - Gap: {gap_display}, Spike: {spike_display}")
+                logger.info(f"Updated thresholds for {key}: Gap={gap_display}, Spike={spike_display}")
+
+                dialog.destroy()
+                messagebox.showinfo("Thành công", f"Đã lưu thông số cho {broker} {symbol}")
+
+            def on_cancel():
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="💾 Lưu", command=on_save, width=10).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="❌ Hủy", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+        except Exception as e:
+            logger.error(f"Error editing gap/spike from context: {e}")
+            messagebox.showerror("Error", f"Lỗi: {str(e)}")
+
+
     def on_delay_double_click(self, event):
         """Xử lý double-click vào symbol từ bảng Delay để mở chart"""
         try:
@@ -5963,6 +6107,31 @@ class SettingsWindow:
         ttk.Label(cooldown_frame, text="(Cố định - không thể thay đổi)", foreground='gray',
                  font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
 
+        # Startup delay settings
+        startup_frame = ttk.LabelFrame(audio_frame, text="🚀 Delay khi khởi động ứng dụng", padding="10")
+        startup_frame.pack(fill=tk.X, pady=10)
+
+        startup_info = ttk.Frame(startup_frame)
+        startup_info.pack(fill=tk.X, pady=5)
+
+        ttk.Label(startup_info, text="⏱️ Không cảnh báo/chụp ảnh sau khi khởi động ứng dụng:",
+                 font=('Arial', 9)).pack(side=tk.LEFT, padx=5)
+
+        self.startup_delay_var = tk.IntVar(value=audio_settings.get('startup_delay_minutes', 5))
+        startup_spinbox = ttk.Spinbox(startup_info, from_=0, to=30, textvariable=self.startup_delay_var,
+                                      width=8)
+        startup_spinbox.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(startup_info, text="phút", font=('Arial', 9)).pack(side=tk.LEFT, padx=5)
+
+        startup_desc = (
+            "📝 Khi khởi động ứng dụng lần đầu, Python sẽ không phát cảnh báo âm thanh\n"
+            "    và không chụp ảnh trong khoảng thời gian này.\n"
+            "    (Không áp dụng cho nút 'Khởi động lại' hay reset định kỳ)"
+        )
+        ttk.Label(startup_frame, text=startup_desc, justify=tk.LEFT, foreground='blue',
+                 font=('Arial', 9)).pack(anchor=tk.W, pady=5)
+
         # Separator
         ttk.Separator(audio_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
@@ -6051,19 +6220,22 @@ class SettingsWindow:
             audio_settings['gap_sound'] = self.gap_sound_var.get()
             audio_settings['spike_sound'] = self.spike_sound_var.get()
             audio_settings['delay_sound'] = self.delay_sound_var.get()
-            
+            audio_settings['startup_delay_minutes'] = self.startup_delay_var.get()
+
             save_audio_settings()
-            
+
             status = "BẬT" if audio_settings['enabled'] else "TẮT"
-            messagebox.showinfo("Success", 
+            startup_delay = audio_settings['startup_delay_minutes']
+            messagebox.showinfo("Success",
                               f"✅ Đã lưu Audio Settings!\n\n"
                               f"Trạng thái: {status}\n"
                               f"Gap: {os.path.basename(audio_settings['gap_sound'])}\n"
                               f"Spike: {os.path.basename(audio_settings['spike_sound'])}\n"
-                              f"Delay: {os.path.basename(audio_settings['delay_sound'])}")
-            
-            self.main_app.log(f"🔊 Saved audio settings: enabled={status}")
-            logger.info(f"Audio settings saved")
+                              f"Delay: {os.path.basename(audio_settings['delay_sound'])}\n"
+                              f"Startup Delay: {startup_delay} phút")
+
+            self.main_app.log(f"🔊 Saved audio settings: enabled={status}, startup_delay={startup_delay}m")
+            logger.info(f"Audio settings saved: startup_delay={startup_delay}m")
             
         except Exception as e:
             logger.error(f"Error saving audio settings: {e}")
