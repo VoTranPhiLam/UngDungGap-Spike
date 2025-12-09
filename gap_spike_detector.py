@@ -92,6 +92,12 @@ delay_settings = {
     'threshold': 180,  # Default delay threshold in seconds
     'auto_hide_time': 3600  # Auto hide after 60 minutes
 }
+
+# Product-specific delay settings (in minutes)
+# Format: {"broker_symbol": delay_minutes}
+# Example: {"RadexMarkets-Live_XAUUSD": 10}
+product_delay_settings = {}
+
 screenshot_settings = {
     'enabled': True,  # Auto screenshot when gap/spike detected
     'save_gap': True,  # Save screenshot for gap
@@ -1709,6 +1715,28 @@ def save_delay_settings():
         logger.info(f"Saved delay settings: threshold={delay_settings['threshold']}s")
     except Exception as e:
         logger.error(f"Error saving delay settings: {e}")
+
+def load_product_delay_settings():
+    """Load product-specific delay settings from JSON file"""
+    global product_delay_settings
+    try:
+        if os.path.exists('product_delay_settings.json'):
+            with open('product_delay_settings.json', 'r', encoding='utf-8') as f:
+                product_delay_settings = json.load(f)
+            logger.info(f"Loaded product delay settings: {len(product_delay_settings)} products configured")
+        else:
+            logger.info("No product_delay_settings.json found, using defaults")
+    except Exception as e:
+        logger.error(f"Error loading product delay settings: {e}")
+
+def save_product_delay_settings():
+    """Save product-specific delay settings to JSON file"""
+    try:
+        with open('product_delay_settings.json', 'w', encoding='utf-8') as f:
+            json.dump(product_delay_settings, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved product delay settings: {len(product_delay_settings)} products configured")
+    except Exception as e:
+        logger.error(f"Error saving product delay settings: {e}")
 
 def load_screenshot_settings():
     """Load screenshot settings from JSON file"""
@@ -3718,39 +3746,48 @@ class GapSpikeDetectorGUI:
         for key, tracking_info in bid_tracking.items():
             last_change_time = tracking_info['last_change_time']
             delay_duration = current_time - last_change_time
-            
-            # Only show if delay >= threshold
-            if delay_duration >= delay_threshold:
+
+            # Get custom delay for this product (in minutes, need to convert to seconds)
+            product_custom_delay_minutes = product_delay_settings.get(key, None)
+            if product_custom_delay_minutes is not None:
+                product_delay_threshold = product_custom_delay_minutes * 60  # Convert minutes to seconds
+                product_auto_hide_time = product_custom_delay_minutes * 60  # Use custom delay as hide time
+            else:
+                product_delay_threshold = delay_threshold
+                product_auto_hide_time = delay_settings.get('auto_hide_time', 3600)
+
+            # Only show if delay >= threshold (custom or default)
+            if delay_duration >= product_delay_threshold:
                 broker, symbol = key.split('_', 1)
-                
+
                 # 🔒 Skip nếu bị hide thủ công
                 if key in manual_hidden_delays:
                     manually_hidden_count += 1
                     hidden_count += 1
                     continue
-                
+
                 # Get current data from market_data
                 if broker in market_data and symbol in market_data[broker]:
                     symbol_data = market_data[broker][symbol]
                     current_bid = symbol_data.get('bid', 0)
                     is_open = symbol_data.get('isOpen', False)
-                    
+
                     # ⚠️ CHỈ HIỂN thị delay nếu đang trong giờ giao dịch
                     if not is_open:
                         continue  # Bỏ qua nếu thị trường đóng cửa
-                    
-                    # 🔒 Ẩn nếu delay quá 60 phút (3600 giây) - auto hide
-                    auto_hide_time = delay_settings.get('auto_hide_time', 3600)
-                    if delay_duration >= auto_hide_time:
+
+                    # 🔒 Ẩn nếu delay vượt ngưỡng auto hide (custom hoặc default)
+                    if delay_duration >= product_auto_hide_time:
                         hidden_count += 1
                         continue  # Ẩn khỏi bảng chính, chỉ hiển thị trong Hidden window
-                    
+
                     delayed_symbols.append({
                         'broker': broker,
                         'symbol': symbol,
                         'bid': current_bid,
                         'last_change_time': last_change_time,
-                        'delay_duration': delay_duration
+                        'delay_duration': delay_duration,
+                        'custom_delay_minutes': product_custom_delay_minutes  # Track custom delay for display
                     })
         
         # Sort by delay duration (longest first)
@@ -3763,21 +3800,32 @@ class GapSpikeDetectorGUI:
             bid = item['bid']
             last_change_time = item['last_change_time']
             delay_duration = item['delay_duration']
-            
+            custom_delay_minutes = item.get('custom_delay_minutes', None)
+
             # Format display
             last_change_str = server_timestamp_to_datetime(last_change_time).strftime('%H:%M:%S')
             delay_minutes = int(delay_duration / 60)
             delay_seconds = int(delay_duration % 60)
             delay_str = f"{delay_minutes}m {delay_seconds}s"
-            
+
             # Determine tag/status
-            if delay_duration >= delay_threshold * 2:
-                tag = 'delay_critical'
-                status = f"🔴 CRITICAL DELAY ({delay_str})"
+            # Use custom delay threshold if set, otherwise use default
+            if custom_delay_minutes is not None:
+                threshold_for_critical = custom_delay_minutes * 60  # Convert to seconds
+                if delay_duration >= threshold_for_critical:
+                    tag = 'delay_critical'
+                    status = f"🔴 DELAY ({delay_str}) [Custom: {custom_delay_minutes}min]"
+                else:
+                    tag = 'delay_warning'
+                    status = f"⚠️ DELAYED ({delay_str}) [Custom: {custom_delay_minutes}min]"
             else:
-                tag = 'delay_warning'
-                status = f"⚠️ DELAYED ({delay_str})"
-            
+                if delay_duration >= delay_threshold * 2:
+                    tag = 'delay_critical'
+                    status = f"🔴 CRITICAL DELAY ({delay_str})"
+                else:
+                    tag = 'delay_warning'
+                    status = f"⚠️ DELAYED ({delay_str})"
+
             # Insert row
             self.delay_tree.insert('', 'end', values=(
                 broker,
@@ -5347,11 +5395,34 @@ class GapSpikeDetectorGUI:
                 )
             
             context_menu.add_separator()
+
+            # Custom delay options
+            current_delay = product_delay_settings.get(key, None)
+            if current_delay is not None:
+                context_menu.add_command(
+                    label=f"⏱️ Set Custom Delay (Current: {current_delay} min)",
+                    command=lambda: self.set_product_delay_dialog(broker, symbol)
+                )
+                context_menu.add_command(
+                    label=f"🔄 Apply {current_delay} min to ALL products",
+                    command=lambda: self.apply_delay_to_all_products(broker, symbol)
+                )
+                context_menu.add_command(
+                    label=f"❌ Clear Custom Delay",
+                    command=lambda: self.clear_product_delay(broker, symbol)
+                )
+            else:
+                context_menu.add_command(
+                    label=f"⏱️ Set Custom Delay",
+                    command=lambda: self.set_product_delay_dialog(broker, symbol)
+                )
+
+            context_menu.add_separator()
             context_menu.add_command(
                 label=f"📈 Open Chart",
                 command=lambda: self.open_chart(broker, symbol)
             )
-            
+
             context_menu.tk_popup(event.x_root, event.y_root)
             
         except Exception as e:
@@ -5389,7 +5460,165 @@ class GapSpikeDetectorGUI:
             
         except Exception as e:
             logger.error(f"Error unhiding delay symbol: {e}")
-    
+
+    def set_product_delay_dialog(self, broker, symbol):
+        """Show dialog to set custom delay for a product"""
+        try:
+            key = f"{broker}_{symbol}"
+            current_delay = product_delay_settings.get(key, None)
+
+            # Create dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"Set Custom Delay - {symbol}")
+            dialog.geometry("400x200")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # Center dialog
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+            dialog.geometry(f"+{x}+{y}")
+
+            # Title
+            title_label = ttk.Label(dialog, text=f"Set Custom Delay Time for {symbol}", font=('Arial', 12, 'bold'))
+            title_label.pack(pady=10)
+
+            # Broker info
+            info_label = ttk.Label(dialog, text=f"Broker: {broker}")
+            info_label.pack(pady=5)
+
+            # Delay input frame
+            input_frame = ttk.Frame(dialog)
+            input_frame.pack(pady=10)
+
+            ttk.Label(input_frame, text="Delay Time (minutes):").pack(side=tk.LEFT, padx=5)
+
+            delay_var = tk.IntVar(value=current_delay if current_delay is not None else 5)
+            delay_spinbox = ttk.Spinbox(
+                input_frame,
+                from_=1,
+                to=120,
+                textvariable=delay_var,
+                width=10
+            )
+            delay_spinbox.pack(side=tk.LEFT, padx=5)
+            delay_spinbox.focus_set()
+
+            # Current setting info
+            if current_delay is not None:
+                current_label = ttk.Label(dialog, text=f"Current setting: {current_delay} minutes", foreground='blue')
+                current_label.pack(pady=5)
+            else:
+                default_label = ttk.Label(dialog, text="No custom delay set (using default)", foreground='gray')
+                default_label.pack(pady=5)
+
+            # Buttons frame
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=20)
+
+            def on_ok():
+                try:
+                    delay_minutes = delay_var.get()
+                    product_delay_settings[key] = delay_minutes
+                    save_product_delay_settings()
+
+                    self.log(f"⏱️ Set custom delay for {symbol} ({broker}): {delay_minutes} minutes")
+                    logger.info(f"Set product delay: {key} = {delay_minutes} minutes")
+
+                    # Update display
+                    self.update_delay_board_display()
+
+                    dialog.destroy()
+                except Exception as e:
+                    logger.error(f"Error setting product delay: {e}")
+                    messagebox.showerror("Error", f"Failed to set delay: {e}")
+
+            def on_cancel():
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+            # Bind Enter key to OK
+            dialog.bind('<Return>', lambda e: on_ok())
+            dialog.bind('<Escape>', lambda e: on_cancel())
+
+        except Exception as e:
+            logger.error(f"Error showing product delay dialog: {e}")
+
+    def apply_delay_to_all_products(self, broker, symbol):
+        """Apply the delay setting of this product to all products"""
+        try:
+            key = f"{broker}_{symbol}"
+            delay_minutes = product_delay_settings.get(key, None)
+
+            if delay_minutes is None:
+                messagebox.showwarning("Warning", f"{symbol} does not have a custom delay setting.")
+                return
+
+            # Confirm with user
+            confirm = messagebox.askyesno(
+                "Confirm Apply to All",
+                f"Apply {delay_minutes} minutes delay to ALL products?\n\nThis will overwrite any existing custom delays."
+            )
+
+            if not confirm:
+                return
+
+            # Get all products from bid_tracking
+            count = 0
+            for product_key in bid_tracking.keys():
+                product_delay_settings[product_key] = delay_minutes
+                count += 1
+
+            save_product_delay_settings()
+
+            self.log(f"🔄 Applied {delay_minutes} min delay to {count} products")
+            logger.info(f"Applied delay {delay_minutes} min to all products: {count} products affected")
+
+            # Update display
+            self.update_delay_board_display()
+
+            messagebox.showinfo("Success", f"Applied {delay_minutes} minutes delay to {count} products.")
+
+        except Exception as e:
+            logger.error(f"Error applying delay to all products: {e}")
+            messagebox.showerror("Error", f"Failed to apply delay: {e}")
+
+    def clear_product_delay(self, broker, symbol):
+        """Clear custom delay for a product"""
+        try:
+            key = f"{broker}_{symbol}"
+
+            if key not in product_delay_settings:
+                messagebox.showinfo("Info", f"{symbol} does not have a custom delay setting.")
+                return
+
+            delay_minutes = product_delay_settings[key]
+
+            # Confirm with user
+            confirm = messagebox.askyesno(
+                "Confirm Clear",
+                f"Clear custom delay ({delay_minutes} min) for {symbol}?\n\nIt will use the default delay setting."
+            )
+
+            if not confirm:
+                return
+
+            del product_delay_settings[key]
+            save_product_delay_settings()
+
+            self.log(f"❌ Cleared custom delay for {symbol} ({broker})")
+            logger.info(f"Cleared product delay: {key}")
+
+            # Update display
+            self.update_delay_board_display()
+
+        except Exception as e:
+            logger.error(f"Error clearing product delay: {e}")
+            messagebox.showerror("Error", f"Failed to clear delay: {e}")
+
     def open_chart(self, broker, symbol):
         """Mở chart window cho symbol"""
         RealTimeChartWindow(self.root, self, broker, symbol)
@@ -10041,6 +10270,7 @@ def main():
     load_audio_settings()
     load_symbol_filter_settings()
     load_delay_settings()
+    load_product_delay_settings()
     load_screenshot_settings()
     load_market_open_settings()
     load_auto_send_settings()
