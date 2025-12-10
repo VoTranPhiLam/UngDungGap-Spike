@@ -3626,7 +3626,24 @@ class GapSpikeDetectorGUI:
         skip_spinbox.bind('<FocusOut>', lambda e: self.update_skip_minutes())
         skip_spinbox.bind('<Return>', lambda e: self.update_skip_minutes())
         ttk.Label(alert_control_frame, text="phút sau khi sản phẩm mở cửa không xét gap/spike (0 = tắt)").pack(side=tk.LEFT, padx=2)
-        
+
+        # Separator
+        ttk.Separator(alert_control_frame, orient='vertical').pack(side=tk.LEFT, fill='y', padx=10)
+
+        # Hide All Alerts button
+        ttk.Button(
+            alert_control_frame,
+            text="🔒 Hide All Alerts",
+            command=self.hide_all_alerts
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Show Hidden Alerts button
+        ttk.Button(
+            alert_control_frame,
+            text="👁️ Show Hidden Alerts",
+            command=self.open_hidden_alerts_window
+        ).pack(side=tk.LEFT, padx=5)
+
         # Create Treeview for alerts
         alert_columns = ('Broker', 'Symbol', 'Price', 'Gap %', 'Gap Threshold', 'Spike %', 'Spike Threshold', 'Alert Type', 'Time', 'Grace')
         self.alert_tree = ttk.Treeview(alert_frame, columns=alert_columns, show='headings', height=5)
@@ -6264,6 +6281,45 @@ class GapSpikeDetectorGUI:
 
         except Exception as e:
             logger.error(f"Error hiding alert symbol: {e}")
+
+    def hide_all_alerts(self):
+        """Hide all alert items currently in alert board"""
+        try:
+            if not alert_board:
+                messagebox.showinfo("Info", "Không có alert nào để ẩn")
+                return
+
+            # Confirm action
+            count = len(alert_board)
+            result = messagebox.askyesno(
+                "Xác nhận",
+                f"Bạn có chắc muốn ẩn tất cả {count} alerts?\n\n" +
+                "Bạn có thể xem và bỏ ẩn chúng sau bằng nút '👁️ Show Hidden Alerts'"
+            )
+
+            if not result:
+                return
+
+            # Hide all items
+            hidden_count = 0
+            for key in list(alert_board.keys()):
+                alert_info = alert_board[key]
+                broker = alert_info['data'].get('broker', '')
+                symbol = alert_info['data'].get('symbol', '')
+
+                if broker and symbol:
+                    hide_alert_item(broker, symbol, duration_minutes=None)  # Hide permanently
+                    hidden_count += 1
+
+            self.log(f"🔒 Đã ẩn {hidden_count} alerts")
+            logger.info(f"Hidden all {hidden_count} alerts")
+
+            # Update display
+            self.update_alert_board_display()
+
+        except Exception as e:
+            logger.error(f"Error hiding all alerts: {e}")
+            messagebox.showerror("Error", f"Lỗi khi ẩn alerts: {e}")
 
     def edit_gap_spike_alert(self, broker, symbol, is_point_based):
         """Edit Gap/Spike thresholds from alert board context menu"""
