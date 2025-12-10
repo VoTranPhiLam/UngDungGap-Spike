@@ -140,6 +140,13 @@ symbol_filter_settings = {
 
 SYMBOL_FILTER_FILE = 'symbol_filter_settings.json'
 
+# Broker selection settings (cho phép chọn sàn khi khởi động)
+broker_selection_settings = {
+    'enabled_brokers': []  # Danh sách các broker được chọn để kết nối
+}
+
+BROKER_SELECTION_FILE = 'broker_selection_settings.json'
+
 PICTURE_ASSIGNEE_CHOICES = [
     '',  # Allow clearing selection
     'Tâm',
@@ -1491,6 +1498,59 @@ def save_symbol_filter_settings():
     except Exception as e:
         logger.error(f"Error saving symbol filter settings: {e}")
 
+# ===================== BROKER SELECTION SETTINGS =====================
+def load_broker_selection_settings():
+    """Load broker selection settings from JSON file"""
+    global broker_selection_settings
+    try:
+        if os.path.exists(BROKER_SELECTION_FILE):
+            with open(BROKER_SELECTION_FILE, 'r', encoding='utf-8') as f:
+                loaded = json.load(f) or {}
+
+            enabled_brokers = loaded.get('enabled_brokers', [])
+            if not isinstance(enabled_brokers, list):
+                enabled_brokers = []
+
+            broker_selection_settings['enabled_brokers'] = enabled_brokers
+
+            logger.info(
+                "Loaded broker selection settings: %d brokers enabled",
+                len(enabled_brokers)
+            )
+        else:
+            broker_selection_settings['enabled_brokers'] = []
+            logger.info("No broker_selection_settings.json found, using defaults")
+    except Exception as e:
+        logger.error(f"Error loading broker selection settings: {e}")
+        broker_selection_settings['enabled_brokers'] = []
+
+def save_broker_selection_settings():
+    """Save broker selection settings to JSON file"""
+    try:
+        payload = {
+            'enabled_brokers': broker_selection_settings.get('enabled_brokers', [])
+        }
+
+        with open(BROKER_SELECTION_FILE, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        logger.info(
+            "Saved broker selection settings: %d brokers enabled",
+            len(payload['enabled_brokers'])
+        )
+    except Exception as e:
+        logger.error(f"Error saving broker selection settings: {e}")
+
+def is_broker_enabled(broker):
+    """Check if a broker is enabled for data reception"""
+    enabled_brokers = broker_selection_settings.get('enabled_brokers', [])
+
+    # Nếu danh sách rỗng, mặc định cho phép tất cả (backward compatibility)
+    if not enabled_brokers:
+        return True
+
+    return broker in enabled_brokers
+
 # ===================== SYMBOL FILTER HELPERS =====================
 def is_symbol_selected_for_detection(broker, symbol):
     """
@@ -2764,6 +2824,13 @@ def receive_data():
         broker = data.get('broker', 'Unknown')
         timestamp = data.get('timestamp', int(time.time()))
         symbols_data = data.get('data', [])
+
+        # Kiểm tra xem broker có được chọn để nhận dữ liệu hay không
+        if not is_broker_enabled(broker):
+            return jsonify({
+                'status': 'ignored',
+                'message': f'Broker "{broker}" is not enabled for data reception'
+            }), 200
         
         with data_lock:
             # Optimize: Use setdefault() instead of if-check (faster dict access)
@@ -3086,6 +3153,330 @@ def health():
         "total_symbols": sum(len(symbols) for symbols in market_data.values())
     })
 
+# ===================== BROKER SELECTION DIALOGS =====================
+class BrokerSelectionDialog:
+    """Dialog chọn sàn khi khởi động ứng dụng"""
+
+    def __init__(self, parent):
+        self.result = None
+        self.broker_vars = {}
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("🏦 Chọn Sàn Kết Nối")
+        self.window.geometry("600x500")
+
+        # Center the window
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        x = (screen_width - 600) // 2
+        y = (screen_height - 500) // 2
+        self.window.geometry(f"600x500+{x}+{y}")
+
+        # Make window modal
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.lift()
+        self.window.focus_force()
+
+        # Header
+        header_frame = ttk.Frame(self.window, padding="20")
+        header_frame.pack(fill=tk.X)
+
+        ttk.Label(
+            header_frame,
+            text="Chọn Sàn Để Kết Nối",
+            font=('Arial', 16, 'bold')
+        ).pack()
+
+        ttk.Label(
+            header_frame,
+            text="Chỉ những sàn được chọn sẽ nhận dữ liệu từ EA",
+            font=('Arial', 10),
+            foreground='gray'
+        ).pack(pady=5)
+
+        # Broker list frame
+        list_frame = ttk.LabelFrame(self.window, text="Danh sách Sàn", padding="10")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # Scrollable frame
+        canvas = tk.Canvas(list_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Load available brokers from previous settings
+        available_brokers = self._get_available_brokers()
+        enabled_brokers = broker_selection_settings.get('enabled_brokers', [])
+
+        if not available_brokers:
+            ttk.Label(
+                scrollable_frame,
+                text="Chưa có sàn nào trong dữ liệu.\nVui lòng chạy EA trên MT4/MT5 trước.",
+                font=('Arial', 10),
+                foreground='red'
+            ).pack(pady=20)
+        else:
+            for broker in sorted(available_brokers):
+                var = tk.BooleanVar(value=(broker in enabled_brokers or not enabled_brokers))
+                self.broker_vars[broker] = var
+
+                cb = ttk.Checkbutton(
+                    scrollable_frame,
+                    text=broker,
+                    variable=var,
+                    style='TCheckbutton'
+                )
+                cb.pack(anchor=tk.W, pady=5, padx=10)
+
+        # Buttons
+        button_frame = ttk.Frame(self.window, padding="10")
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        ttk.Button(
+            button_frame,
+            text="Chọn tất cả",
+            command=self._select_all
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="Bỏ chọn tất cả",
+            command=self._deselect_all
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="✅ Xác nhận",
+            command=self._confirm,
+            style='Accent.TButton'
+        ).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="❌ Hủy",
+            command=self._cancel
+        ).pack(side=tk.RIGHT, padx=5)
+
+        # Handle window close
+        self.window.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _get_available_brokers(self):
+        """Lấy danh sách broker từ các nguồn có sẵn"""
+        brokers = set()
+
+        # From market_data (nếu có)
+        brokers.update(market_data.keys())
+
+        # From symbol_filter_settings
+        if 'selection' in symbol_filter_settings:
+            brokers.update(symbol_filter_settings['selection'].keys())
+
+        # From saved broker selection
+        brokers.update(broker_selection_settings.get('enabled_brokers', []))
+
+        # Remove wildcard
+        brokers.discard('*')
+
+        return brokers
+
+    def _select_all(self):
+        """Chọn tất cả broker"""
+        for var in self.broker_vars.values():
+            var.set(True)
+
+    def _deselect_all(self):
+        """Bỏ chọn tất cả broker"""
+        for var in self.broker_vars.values():
+            var.set(False)
+
+    def _confirm(self):
+        """Xác nhận lựa chọn"""
+        selected = [broker for broker, var in self.broker_vars.items() if var.get()]
+        self.result = selected
+        self.window.destroy()
+
+    def _cancel(self):
+        """Hủy bỏ"""
+        self.result = None
+        self.window.destroy()
+
+    def show(self):
+        """Hiển thị dialog và đợi kết quả"""
+        self.window.wait_window()
+        return self.result
+
+
+class BrokerManagementDialog:
+    """Dialog quản lý sàn với combobox hiển thị sản phẩm"""
+
+    def __init__(self, parent):
+        self.broker_vars = {}
+        self.broker_combos = {}
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("🏦 Quản Lý Sàn")
+        self.window.geometry("900x600")
+
+        # Center the window
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        x = (screen_width - 900) // 2
+        y = (screen_height - 600) // 2
+        self.window.geometry(f"900x600+{x}+{y}")
+
+        # Make window modal
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.lift()
+        self.window.focus_force()
+
+        # Header
+        header_frame = ttk.Frame(self.window, padding="20")
+        header_frame.pack(fill=tk.X)
+
+        ttk.Label(
+            header_frame,
+            text="Quản Lý Sàn",
+            font=('Arial', 16, 'bold')
+        ).pack()
+
+        ttk.Label(
+            header_frame,
+            text="Chọn/bỏ chọn sàn và xem các sản phẩm có trong MarketWatch",
+            font=('Arial', 10),
+            foreground='gray'
+        ).pack(pady=5)
+
+        # Broker list frame
+        list_frame = ttk.LabelFrame(self.window, text="Danh sách Sàn & Sản phẩm", padding="10")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # Scrollable frame
+        canvas = tk.Canvas(list_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Load brokers
+        available_brokers = list(market_data.keys())
+        enabled_brokers = broker_selection_settings.get('enabled_brokers', [])
+
+        if not available_brokers:
+            ttk.Label(
+                scrollable_frame,
+                text="Chưa có sàn nào kết nối.\nVui lòng chạy EA trên MT4/MT5.",
+                font=('Arial', 10),
+                foreground='red'
+            ).pack(pady=20)
+        else:
+            for broker in sorted(available_brokers):
+                # Broker frame
+                broker_frame = ttk.Frame(scrollable_frame)
+                broker_frame.pack(fill=tk.X, pady=10, padx=10)
+
+                # Checkbox
+                var = tk.BooleanVar(value=(broker in enabled_brokers or not enabled_brokers))
+                self.broker_vars[broker] = var
+
+                cb = ttk.Checkbutton(
+                    broker_frame,
+                    text=broker,
+                    variable=var,
+                    style='TCheckbutton',
+                    command=lambda b=broker: self._on_broker_toggle(b)
+                )
+                cb.pack(side=tk.LEFT, padx=(0, 10))
+
+                # Combobox for symbols
+                symbols = list(market_data.get(broker, {}).keys())
+                combo = ttk.Combobox(
+                    broker_frame,
+                    values=symbols,
+                    state='readonly',
+                    width=50
+                )
+                if symbols:
+                    combo.set(f"📊 {len(symbols)} sản phẩm - Click để xem")
+                else:
+                    combo.set("Không có sản phẩm")
+
+                combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                self.broker_combos[broker] = combo
+
+        # Buttons
+        button_frame = ttk.Frame(self.window, padding="10")
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        ttk.Button(
+            button_frame,
+            text="Chọn tất cả",
+            command=self._select_all
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="Bỏ chọn tất cả",
+            command=self._deselect_all
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="💾 Lưu",
+            command=self._save,
+            style='Accent.TButton'
+        ).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="❌ Đóng",
+            command=self.window.destroy
+        ).pack(side=tk.RIGHT, padx=5)
+
+    def _on_broker_toggle(self, broker):
+        """Xử lý khi toggle broker"""
+        is_enabled = self.broker_vars[broker].get()
+        logger.info(f"Broker {broker} {'enabled' if is_enabled else 'disabled'}")
+
+    def _select_all(self):
+        """Chọn tất cả broker"""
+        for var in self.broker_vars.values():
+            var.set(True)
+
+    def _deselect_all(self):
+        """Bỏ chọn tất cả broker"""
+        for var in self.broker_vars.values():
+            var.set(False)
+
+    def _save(self):
+        """Lưu cài đặt"""
+        selected = [broker for broker, var in self.broker_vars.items() if var.get()]
+        broker_selection_settings['enabled_brokers'] = selected
+        save_broker_selection_settings()
+        messagebox.showinfo("Thành công", f"Đã lưu {len(selected)} sàn được chọn")
+        self.window.destroy()
+
+
 # ===================== GUI APPLICATION =====================
 class GapSpikeDetectorGUI:
     def __init__(self, root):
@@ -3136,6 +3527,7 @@ class GapSpikeDetectorGUI:
         delay_spinbox.pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text="(⚙️ Cài đặt để xem thêm)", foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=2)
 
+        ttk.Button(control_frame, text="🏦 Chọn sàn", command=self.open_broker_management).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="Cài đặt", command=self.open_settings).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="📸 Hình ảnh", command=self.open_picture_gallery).pack(side=tk.RIGHT, padx=5)
         ttk.Button(control_frame, text="🔄 Khởi động lại Python", command=self.reset_python_connection,
@@ -5147,7 +5539,11 @@ class GapSpikeDetectorGUI:
     def open_settings(self):
         """Mở cửa sổ settings"""
         SettingsWindow(self.root, self)
-    
+
+    def open_broker_management(self):
+        """Mở cửa sổ quản lý sàn"""
+        BrokerManagementDialog(self.root)
+
     def open_trading_hours(self):
         """Mở cửa sổ Trading Hours"""
         TradingHoursWindow(self.root, self)
@@ -11694,6 +12090,7 @@ def main():
     load_manual_hidden_delays()
     load_audio_settings()
     load_symbol_filter_settings()
+    load_broker_selection_settings()  # Load broker selection settings
     load_delay_settings()
     load_product_delay_settings()
     load_hidden_products()
@@ -11711,16 +12108,34 @@ def main():
 
     # Ensure pictures folder exists
     ensure_pictures_folder()
-    
+
+    # Create root window for GUI
+    root = tk.Tk()
+    root.withdraw()  # Hide main window temporarily
+
+    # Show broker selection dialog at startup
+    dialog = BrokerSelectionDialog(root)
+    selected_brokers = dialog.show()
+
+    # Save selected brokers if user confirmed
+    if selected_brokers is not None:
+        broker_selection_settings['enabled_brokers'] = selected_brokers
+        save_broker_selection_settings()
+        logger.info(f"User selected {len(selected_brokers)} brokers: {selected_brokers}")
+    else:
+        logger.info("User cancelled broker selection, using existing settings")
+
+    # Show main window
+    root.deiconify()
+
     # Start Flask server in background thread
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
-    
+
     logger.info(f"Flask server started on http://{HTTP_HOST}:{HTTP_PORT}")
     logger.info(f"EA should send data to: http://127.0.0.1:{HTTP_PORT}/api/receive_data")
-    
+
     # Start GUI
-    root = tk.Tk()
     app_gui = GapSpikeDetectorGUI(root)
     
     # Log initial message
